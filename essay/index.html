@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>Explorable Abstraction</title>
+    <link rel="stylesheet" href="tufte.css"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+  </head>
+
+  <body>
+    <article>
+      <h1 id="title">Explorable Abstraction</h1>
+      <p class="subtitle">Sean McDirmid, May 2019</p>
+      <section>
+         <p>
+         Programmers basically write code blind since they can only imagine what the code they are writing is doing in their heads.
+         
+         <i>Live programming</i> can reduce such blindness by executing and visualizing a live example while code editing occurs.
+
+         Unfortunately, live examples are often too concrete to convey much about general program behavior, and are too detailed to be processed in situ while writing code.
+         
+         At best, the programmer can do a bit of debugging while writing code; at worst they hide or ignore live examples as too distracting. 
+      </p><p>
+         For computers to help programmers see what they are doing, they must show them an image that is much closer to what the programmers are imagining in their head. 
+
+         Such an image is necessarily abstract in that it compresses details that are not relevant to the problem.
+         
+         Consider an example of writing code to do <a href="https://en.wikipedia.org/wiki/Red%E2%80%93black_tree">red-black (RB) tree</a> insertion:
+      </p>
+      <figure>
+            <span class="marginnote">Concrete and abstract images indicating a transformation; left images modified from wikimedia, <a href="https://creativecommons.org/licenses/by-sa/3.0/deed.en">CCASA.</a></span>
+            <img width="100%" src="img/intro/abstract3.png"/>           
+     </figure>
+<p>
+   The left part of this figure uses a concrete example of how a tree is rebalanced using a rotation and some recoloring after a red "7" node is added as a child to "6" via binary insert. 
+
+   Much of the concrete RB tree is not involved in the rotation, and in fact, only the "1",  "6", and "7" nodes need to be manipulated. 
+
+   Additionally, the topology of these nodes with respect to each other is not relevant, as long as they match from "1" to "7" in the left image so a rotation is possible.
+
+   The right part of the figure shows an abstract image that can suitably stand in for the concrete examples at the top of the image: the <code>G</code> node is bound to the "1" node, <code>P</code> to "6", and <code>N</code> to "7". 
+
+   Other parts of the tree are "compressed" as triangles that represent RB sub-trees, along with the exact topology of the path from  <code>G</code> to <code>N</code> <span class="marginnote">The use of <code>𝛼</code> to parameterize tree topology is talked about in the next section.</span>.  
+
+   Relative black height relationships are tracked (related to <code>k</code>) so that is known that the transformed image (bottom right) can be compressed into one proper red-black tree.
+</p><p>
+   Abstract images can provide programmers with all the feedback they need about code behavior. 
+
+   In fact, they can skip the code altogether and directly manipulate these images instead, leading to an interesting experience where the programmer appears to be "exploring" the abstraction. 
+
+   The rest of this essay explores how abstract imagry can be used just on RB trees to create an explorable abstraction experience.
+      </p></section>
+      <section>
+            <h2 id="notation">Notation</h2>
+            <p>
+               Unlike a programming language, a notation for an explorable abstraction focuses representing program state rather than specifying program behavior. 
+
+               We refer to a representation as an <i>image</i> and the ellision of detail in an image as <i>compression</i>. 
+
+               An image must contain enough details so that each transformation meaningfully changes it, while other details that are not useful to whatever logic is being implemented should be compressed.
+
+            </p><p>
+              Notations for explorable abstractions are domain specific.
+
+              Unlike a string of numbers, well formed red-black (RB) trees have many properties that need to be accounted for in their compression:
+            </p>
+            <ul>
+               <li>An RB tree must be rooted and leafed by black colored nodes.</li>
+               <li>A red node cannot be the parent of another red node.</li>
+               <li>All paths in a RB tree from root to leaf must have the same number of black nodes (aka <i>black height</i>).</li>
+         </ul>
+            <p>
+            A triangle with a black dot on top (<img style="float:both" height="17em" src="img/notation/treeonly.png"/>) is a fully compressed RB tree whose internal structure follows the above requirements.  Parts a compressed RB tree must be expanded  before they can be manipulated; e.g. consider the state of an RB tree just after a binary insert:
+         </p>
+         <figure>
+         <img width="86px" src="img/notation/begin.png"/>        
+         </figure>
+         <p>
+            This image involves three compressed RB trees: one as a parent for a red <code>N</code> node<span class="marginnote">The little filled dot inside the node's circle indicates whether it is red or black.</span>, and two as its children. 
+
+            Because parts of a single RB tree has been expanded, black heights must be kept track of; they are "1" here because binary tree insertion adds a new node to a tree at the bottom.
+            
+             In fact, both of the <code>N</code> node's children are empty since <code>Nil</code> leaves count as one black height.
+
+             The root of this tree has a line above its "1" label to convey that the black height of the <code>N</code> node's compressed sibling if <code>N</code> is not the root (meaning its compressed root parent would be empty). 
+
+             The <code>N</code> node can only be compressed into the root if it also has a black height of one, which it does. 
+
+             However, the compressed root tree says nothing about the color of the <code>N</code> node's parent, which also prevents compression. 
+            </p><p>
+             Not all details tracked in a tangible abstraction are required to exist in the concrete version of the state. 
+             
+             For our example, the black height of a RB tree is exposed in the abstraction but does not need to be tracked at run-time: unless testing for an empty case (easily done by checking for <code>Nil</code>) the height never needs to be used dynamically. 
+
+             We can further generalize on black height with variables that indicate shared black height relationships, e.g.
+            </p>
+            <img width="134px" src="img/notation/intermediate.png"/>        
+            <p>
+            This image specifies that all compressed leaf trees have the same black height of <code>k</code>, while the compressed leaf tree specifies that the <code>P</code> node has a sibling with black height of one greater than <code>k</code><span class="marginnote">The right child of <code>P</code> is a compressed RB sub-tree whose lack a black dot at top means it can be rooted by a red node.</span>. 
+
+            This image also keeps open (with the <code>*</code> under <code>N</code>) whether <code>N</code> is on the left or right of <code>P</code>. If the concrete node bound to <code>N</code> happens to be on the right of the concrete node bound to <code>P</code>, then whatever is bound to its compressed sibling will be on the left. 
+
+            By parameterizing this <i>axis</i>, the image can represent trees no matter how <code>N</code> is parented by <code>P</code>, a detail that is not needed for many kinds of manipulations. 
+
+            However, many kinds of operations, such as rotation, need to know if the axes of two nodes are at least the same; consider:
+            </p>
+            <img width="350px" src="img/intro/abstract.png"/>           
+            <p>
+            In the left image, the axes of both <code>G</code> and <code>P</code> are bound to the <code>𝛼</code> variable, meaning they are the same: either <code>P</code> is to the left of <code>G</code> and <code>N</code> is to the left of <code>P</code>, or <code>P</code> is to the right of <code>G</code> and <code>N</code> is to the right of <code>P</code>. 
+
+            In either case, rotation of <code>P</code> up into <code>G</code>'s location transmutes to the same right image. 
+
+            At the same time, <code>P</code> and <code>G</code> are recolored and, because <code>P</code>'s black height is <code>k + 1</code>, the entire RB tree is compressible.
+         </p>
+      </section>
+      <section>
+        <h2 id="notation">Transmutations</h2>
+        <p>
+           <i>Transmutation</i> is used here to describe a discrete action that transforms an image into one or many other images. 
+
+           A program then consists of a bunch of image transformations, where control flow simply invokes pre-existing transmutations given similar input images. 
+
+           Transmutations come in three forms:
+        </p><ul>
+           <li><i>Mutating</i> transmutations actually mutate program state as well as changing an image's form; e.g. rotation and flipping node color;</li>
+           <li><i>Expansion</i> transmuations decompresses the image into multiple cases that can be represented by a compression; e.g. the compressed parent of a node can be black, red with an added black grand parent, or empty; and </li>
+           <li><i>Compression</i> transmuations that change an image's form without changing program state or branching; e.g. compressing nodes into RB trees and generalizing its black-height to a variable. </li>
+        </ul><p>
+           Basically, mutations write program state, expansions read program state, and compressions make the image more general (ie less detailed). 
+
+           Only two mutating transmutations are used to express RB tree insertion beyond the initial binary tree insertion. 
+           
+           Node rotation moves a child node up to its parent's position and make that parent its child while preserving the trees ordering properties. 
+           
+           Another operation is needed to "flip" the color of a node between red and black during balancing. 
+         </p><h3>Expansions</h3><p>
+           Expansions extract out the compressed details of an image with generated code that classifies concrete program state at run-time. 
+
+           Three different expansions are needed to express RB tree insertion. 
+
+           First, the compressed parent of a node can be expanded into three cases:
+         </p>
+         <figure>
+               <span class="marginnote">Expansion of parent compressed tree in (a) into various cases (b), (c), and (d).</span>
+               <img width="507px" src="img/transmutation/root.png"/>           
+      </figure>
+         <p>
+            For the original compressed tree that roots (a) by being a parent of node <code>N</code>, (b) indicates that <code>N</code>'s parent is empty (<code>N</code> is itself root), (c) indicates that the parent <code>P</code> of <code>N</code> is a black, and (d) indicates that the parent <code>P</code> of <code>N</code> is red, meaning that <code>P</code> itself must be parented by a red grandparent <code>G</code>.
+
+            The sibling black height specified in the compressed parent tree is added to in each non-empty case depending since revealing a black node means that a potential sibling also has one more black height. 
+
+            Also, in the last two cases, the child that <code>N</code> is of <code>P</code> is left open using <code>*</code> under <code>P</code>, which is repeated in case (d) where a grandparent is also revealed.
+
+            Finally, according to RB tree invariants, whenever an expansion reveals a red node, we know that its exapanded child must be empty or rooted by a black node, while a revealed black node need not be (no black dot at the top of the expanded child). 
+          </p><p>
+             Second, compressed leaf trees undergo an expansion analogous to compressed parent trees in revealing a root node. 
+
+             However, there is a different between compressed RB trees must be rooted by a black node if they are not empty (<img style="float:both" height="17em" src="img/transmutation/closedleaf.png"/>) and those that are not (<img style="float:both" height="17em" src="img/transmutation/openleaf.png"/>). 
+             
+             The latter (<img style="float:both" height="17em" src="img/transmutation/openleaf.png"/>) expands into either the former <img style="float:both" height="17em" src="img/transmutation/closedleaf.png"/> or a red node whose two children are each a <img style="float:both" height="17em" src="img/transmutation/closedleaf.png"/>.
+
+             The former (<img style="float:both" height="17em" src="img/transmutation/closedleaf.png"/>) can be empty, meaning it expands out to a <img style="float:both" height="17em" src="img/transmutation/oneonly.png"/>, which is necessarily empty. 
+
+             If the original compressed leaf had a variable expression to describe its black height, this expression is equated to one and the variable is replaced throughout the entire tree; if the expression cannot be equated to one, then the compressed leaf cannot be empty.
+             
+             Otherwise, a compressed leaf can expand out to a black node with two open leaf trees of one less black height than the original (e.g. <code>k - 1</code> for an original <img style="float:both" height="17em" src="img/transmutation/closedleaf.png"/>).
+            </p><p>
+             Third, topology variables that parameterize whether a node is the left or right child of a node can be compared to each leading to cases where they are the same or are different as shown:
+            </p><figure>
+                  <span class="marginnote">Wildcard topology comparison in (a) into an equal case (b) and not equal case (c).</span>
+                  <img width="576px" src="img/transmutation/topology.png"/>        
+             </figure><p>
+             In this example, the parameterized topologies of <code>G</code> and <code>P</code> from (a) are compared to yield same case (b) or opposite case (c).
+
+             Known topology correspondance then allows rotations to occur without having to know what the concrete topoligies actually are. 
+        </p><h3>Compressions</h3>
+        <p>
+           Non-expansion control flow can only happen reliably between similar images so that shared image transformations remain valid; e.g. routines should return one image even if they have multiple return points, cases should break at the same image, and a loop can only be continued if it ends in the same image as its head.
+
+           Compressions simply eliminate details to change the image into a form 
+           that makes images obviously similar. 
+
+           Only two compressions are needed to do RB insert.
+
+          The first compression simply reassigns specific black heights into parameterized ones; e.g.   
+         </p>
+         <figure>
+         <img width="175px" src="img/transmutation/generalize.png"/>        
+         </figure>
+         <p>
+           The reason this must be done in the implementation of RB insert is because rebalancing actually requires looping with a red node with an increasing black height of <code>k</code> for its siblings and leaves. 
+           
+           Next consider:
+         </p>
+         <figure>
+         <img width="368px" src="img/transmutation/compress.png"/>        
+         </figure>
+         <p>
+            This example demonstrates the second compression needed for RB insert: the compression of a node into a RB tree. 
+
+            Both the <code>P</code> and <code>U</code> nodes are the roots of valid RB trees of height <code>k + 1</code>, and so they can be compressed.
+
+            The resulting image then has <code>G</code> with two compressed <code>k + 1</code> trees as children. 
+
+            This image in turn matches the right one of the previous example, allowing for a loop where <code>k</code> becomes <code>k + 1</code> and <code>N</code> becomes <code>G</code>.
+        </p>
+      </section>
+
+      <section>
+      <h2 id="notation">Programmer Experience</h2>
+      <p>
+         Given an abstract notation for images and well-defined transmutations over those images, programmers by directly transmutating images rather than writing code. 
+            
+
+
+         Put it all together with programmer interface. Transformations are performed direclty on the (visual) notation, control flow (goto) when states match. "Flow". Link to video and actual demos. 
+      </p> 
+      </section>
+
+      <section>
+            <h2 id="notation">Discussion</h2>
+            <p>
+               Limitation. Oppurtunities. Future work. 
+            </p> 
+      </section>
+      <section><p>
+            In the movie Iron Man, the protagnist uses a 3D holographic environment to fluidly design his power suit. 
+            <span class="marginnote"><img src="img/ironman.jpg"/>Designing things with an augmented experience (Iron Man 2008).</span>
+   
+           The protaginist could rapidly <b>explore</b> the design of the artifact being designed, gaining immediate feedback as discrete changes were made over the artifact's representation.
+   
+           Such interaction reduces the mental burden on the designer since they need imagine (via mental simulation) less what their changes are actually doing.
+   
+           In my opinion, this was the best part of the film, better than any of its action segments:  this movie was really about augmented crafting!
+         </p><p>
+           <i>Live programming</i> attempts to bring this kind of tight feedback loop to the task of programming with live example execution while code is being edited. 
+   
+           This allows programmers to see what their code is doing as soon as they write it, with the idea that such feedback will reinforce their mental model about the program's behavior. 
+           
+           Unfortunately, such live examples are usually incomplete, not covering all possible cases in the code. 
+            
+           Live examples are also often too detailed given the task at hand, taxing the programmer mentally while they are writing code.
+   
+           Consider applying insertion into a example concrete <a href="https://en.wikipedia.org/wiki/Red%E2%80%93black_tree">red-black tree</a>:
+         </p>
+               <figure>
+                     <span class="marginnote">Modified from wikimedia, <a href="https://creativecommons.org/licenses/by-sa/3.0/deed.en">CCASA.</a></span>
+                     <img width="45%" src="img/rbtreeB.png"/><img align="right" width="50%" src="img/rbtreeC.png"/>           
+              </figure>
+         <p>
+            In the first tree, "7" is added as a red node via normal binary tree insert,which is then transformed by rebalancing code into the second tree by rotating up the "7" node and recoloring the "1" and "6" nodes. 
+   
+            Seeing this example update live when writing code is actually not that useful to the programmer. 
+   
+            First, the example is not very general: it does not cover other rotation cases or cases that do not involve rotation.
+   
+            Second, it is way too detailed, many of the nodes are not involved in the update and the not all specific node details, like values, are not of interest to the logic being implemented. 
+   
+            At best, the programmer can debug a bit while they write code; at worst they are distracted from the abstract thinking needed for a general solution and are better off hiding it.  
+            </p><p>
+            So that feedback is useful as well as immediate, programmers need something to look at while programming that is more general and abstract.
+   
+            So rather than look at the above concrete red-black trees, programmers could look at abstract <i>images</i> of red-black trees instead:
+            </p>
+            <figure>
+                  <img width="50%" src="img/intro/abstract.png"/>           
+           </figure>
+         <p>            
+              These two abstract red-black tree images are analogous to concrete red-black trees above, where <code>G</code> is the "1" node, <code>P</code> is the "6" node, and <code>N</code> the inserted "7" node; all other nodes are hidden under triangles that represent well formed sub-trees.
+   
+             Even though "7" is to the right of "6" and "6" is to the right of "1" in the first concrete example, the "𝛼" axis variable abstracts this detail away so that the only restriction is that <code>P</code> is on the same side of <code>G</code> as <code>N</code> is to <code>P</code>.
+   
+             Finally, a rotation and node color swaps occurs directly over this abstract representation, providing feedback to the programmer that the entire tree is now well formed.   
+             </p>
+             <p>
+              These images are abstract representations of possible program states, exposing only details needed for the task at hand. 
+   
+              Rather than write code to manipulate these images indirectly, programmers can instead <i>transmutate</i> the images directly, where such transmutation corresponds to general code because the images are abstract.
+   
+              In this sense, programmers can <b>explore</b> programming problems through manipulation like they might explore a Rubik's Cube by moving it around. 
+   
+              The rest of this essay explores the mechanics and merits of this <i>explorable abstraction</i> approach. 
+            </p><p>
+                  Consider a list of numbers:
+               </p><code>[31, 98, 13, 57, 91, 20, 2, 63]</code><p>
+   
+               If the goal is to partition this list based on its first value (31) as a pivot, this image can be compressed by replacing specific numbers with either A (≤ 31) or B (&gt; 31): 
+               </p><code>[A, B, A, B, B, A, A, B]</code><p>
+                  
+               Since a specific sequence of As and Bs is also too specific, the image can be further compressed using a disjunction operator and a regex-like <a href="https://en.wikipedia.org/wiki/Kleene_star">kleene star</a> operator <code>*</code> so that the image is now <code>(A|B)*</code>, which matches any list of numbers.
+   
+               The image <code>(A|B)*</code> can then be transmuted<span class="marginnote">We talk about transmutation in the next section.</span> into <code>A*B*</code>, so the As and Bs would have been rearranged into <code>[A, A, A, A, B, B, B, B]</code> and the original list of numbers becomes <code>[31, 13, 20, 2, 98, 57, 91, 63]</code>.
+   
+            </p>
+         </section>
+         
+    </article>
+  </body>
+</html>

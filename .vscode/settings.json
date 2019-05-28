@@ -1,0 +1,24 @@
+// Place your settings in this file to overwrite default and user settings.
+{
+   "editor.useTabStops": false,
+   "editor.tabSize": 3,
+   "editor.insertSpaces": true,
+   "editor.detectIndentation": false,
+   "cSpell.enabled": false,
+   "color-highlight.matchWords": true,
+   "color-highlight.markerType": "dot",
+   "color-highlight.markRuler": false,
+   "files.exclude": {
+      "paper":true,
+      "**/.git": true,
+      "**/.svn": true,
+      "**/.hg": true,
+      "**/.DS_Store": true,
+      "**/node_modules": true,
+      "**/typings": true,
+      "**/*.js": true,
+      "**/*.js.map": true,
+      "**/out": true
+   },
+   //"typescript.referencesCodeLens.enabled": true
+}

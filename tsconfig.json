@@ -1,0 +1,39 @@
+{
+   "compileOnSave": true,
+   "compilerOptions": {
+      "alwaysStrict": false,
+      "target": "es6",
+      "module": "system",
+      "moduleResolution": "node",
+      "lib": [
+         "es2015",
+         "dom",
+         "es2015.generator",
+         "es6",
+         "es2015.iterable",
+         "es2015.collection"
+      ],
+      "noImplicitAny": true,
+      "noImplicitReturns": true,
+      "sourceMap": true,
+      "emitDecoratorMetadata": true,
+      "experimentalDecorators": true,
+      "removeComments": false,
+      "allowUnreachableCode": true
+   },
+   "files": [
+      "util/monkey.ts",
+      "util/util.ts",
+      "util/elem.ts",
+      "util/ui.ts",
+      "render.ts",
+      "domain.ts",
+      "vis.ts",
+      "blocks.ts",
+      "instructions.ts",
+      "main.ts",
+   ],
+   "exclude": [
+      "node_modules"
+   ]
+}
