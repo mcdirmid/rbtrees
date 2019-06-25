@@ -134,7 +134,7 @@ namespace rn0 {
    export type Undo = () => void;
    export type Do = (() => [Undo, Address]);
    export type Target = ((m: Address) => (false | Do));
-   export type Scrub = (m: Address) => false | (() => {});
+   export type Scrub = (m: Address) => false | (() => void);
    // identify a sub element aside address that identifies an element. 
    export type Label = string;
    // clients use this Input interface to specify input actions they want to 
@@ -225,7 +225,7 @@ namespace rn0 {
       readonly label: Label;
       readonly addr: Address;
       readonly scrub: boolean;
-      found? : Address;
+      found?: Address;
    }
 
    // handles book keeping for rendering elements around their renderCore method.
@@ -281,7 +281,8 @@ namespace rn0 {
             // if we are just doing hit testing, then we can skip
             // this element entirely if the hit is out of bounds. 
             let posG = pos.add(this.translation);
-            (e.size != null).assert();
+            if (!e.size)
+               return;
             // use custom hit rectangle if available. 
             let rect = posG.vrect(e.size);
             if (!rect.grow(rn.hitTolerance).contains(this.doAt))
@@ -307,7 +308,9 @@ namespace rn0 {
             return sz;
          });
          // size shouldn't change during rendering. 
-         (sz.dist(e.size) < .01).assert();
+         if (!e.size)
+            (this.doAt != false).assert();
+         else (sz.dist(e.size) < .01).assert();
       }
       // omnibus input handler. 
       private handleInput(posR: Vector2D, geom: Geom, input: Input) {
@@ -404,7 +407,7 @@ namespace rn0 {
                }
                if (this.canTarget)
                   delete this.canTarget.found;
-   
+
 
                if (isHold && !isDrag && input.hold) {
                   // we are now holding, only relevant if we have hold
@@ -530,13 +533,15 @@ namespace rn0 {
          });
       }
       // fill a small circle (system defined) with input (usually just "click")
-      fillSmallCircle(center: Vector2D, color: RGB, input?: Input) {
+      fillSmallCircle(center: Vector2D, color: RGB, input?: Input, border?: true) {
          this.g.fillCircle(center, rn.smallCircleRad, color);
          this.handleInput(center, circg(rn.smallCircleRad * 2), input);
+         if (border)
+            this.g.strokeCircle(center, rn.smallCircleRad);
       }
       // stroke a circle of custom radius with optional centered text and input behavior..
-      strokeCircle(center: Vector2D, radius: number, text?: string, input?: Input) {
-         this.g.strokeCircle(center, radius);
+      strokeCircle(center: Vector2D, radius: number, text?: string, input?: Input, stroke? : RGB) {
+         this.g.strokeCircle(center, radius, stroke);
          if (text) {
             // center the text 
             let w = this.g.textWidth(text);
@@ -744,10 +749,10 @@ namespace rn {
    export interface Address extends rn0.Address { }
    // enhance pressinfo with what 
    interface FreezeInfo {
-      readonly addr : Address;
-      readonly label : Label;
+      readonly addr: Address;
+      readonly label: Label;
       readonly from: Vector2D;
-      to? : Vector2D;
+      to?: Vector2D;
    }
 
 
@@ -817,7 +822,7 @@ namespace rn {
       }
       // if we can target, useful during actual rendering and when
       // seeking a target. 
-      protected get canTarget(): false | TargetInfo & {found?: Address} {
+      protected get canTarget(): false | TargetInfo & { found?: Address } {
          if (this.doAt0 && this.doAt0[0] != "target")
             return false;
          if (this.host.pressInfo && this.host.pressInfo.targetInfo)
@@ -869,11 +874,12 @@ namespace rn {
       // by returning false. 
       checkEdit() { return true; }
       // element to be rendered as the host's main child.
-      abstract get child(): [Image, Address];
       makeContext(g: Render2D, opt?: ["target" | "press", Vector2D]): Context {
          this.init(g);
          return new Context(g, this, opt);
       }
+      /*
+      abstract get child(): [Image, Address];
       renderChild(pos: Vector2D, txt: Context): Vector2D {
          let p = this.child;
          if (!p)
@@ -882,6 +888,7 @@ namespace rn {
          txt.renderImage(elem, pos, m);
          return elem.size;
       }
+      */
       seekTarget(at: Vector2D): Context {
          let g = this.top().g;
          this.init(g);
@@ -968,9 +975,9 @@ namespace rntest {
 
 
    interface Context extends rn.Context {
-      readonly host: host; // upgrade.
+      readonly host: Host; // upgrade.
    }
-   export class host extends rn.Host {
+   export class Host extends rn.Host {
       public child: [Image, Address];
       constructor(readonly parent: ui2.Top, child0: Image) {
          super();
@@ -981,6 +988,14 @@ namespace rntest {
          while (address.previous != null)
             address = address.previous;
          this.child = [address.image, address];
+      }
+      renderChild(pos: Vector2D, txt: Context): Vector2D {
+         let p = this.child;
+         if (!p)
+            return Vector2D.Zero;
+         let [elem, m] = p;
+         txt.renderImage(elem, pos, m);
+         return elem.size;
       }
    }
 
@@ -1114,7 +1129,7 @@ namespace rntest {
       c.up = g;
       d.hold = f;
       let top = ui2.Top.useWindow();
-      let h = new host(top, g);
+      let h = new Host(top, g);
       top.renderAll();
       return;
    }
@@ -1122,3 +1137,42 @@ namespace rntest {
 
 }
 
+namespace rn {
+   // a utility class used to display two hosts side by side. 
+   export abstract class Split extends ui2.Elem {
+      abstract get left(): Host;
+      abstract get right(): Host;
+      get rightBottom(): Host { return null; }
+      get children() {
+         let ret = [this.left, this.right];
+         if (this.rightBottom)
+            ret.push(this.rightBottom);
+         return ret;
+      }
+
+      get inset() { return 10; }
+
+      renderLocal(g: Render2D) {
+         super.renderLocal(g);
+         this.left.position = this.inset.vec();
+         this.left.size = this.size.setX(g.textWidth("X", rn.font) * 30);
+         let sizeY = this.size.y;
+         this.right.position = (this.left.position.x + this.left.size.x + this.inset).vec(this.left.position.y);
+         if (this.rightBottom) {
+            sizeY = this.size.y / 2 - this.inset / 2;
+            let rb = this.rightBottom;
+            rb.position = this.right.position.addY(sizeY + this.inset);
+            rb.size = (this.size.x - this.right.position.x).vec(this.size.y - sizeY - this.inset);
+            {
+               let div = rb.position.x.vec(rb.position.y - this.inset / 2);
+               g.strokeLine([div, div.setX(this.size.x)], { stroke: RGB.black.alpha(.1), lineWidth: this.inset });
+            }
+         }
+         this.right.size = (this.size.x - this.right.position.x).vec(sizeY);
+         {
+            let div = this.right.position.addX(-this.inset / 2);
+            g.strokeLine([div, div.setY(this.size.y)], { stroke: RGB.black.alpha(.1), lineWidth: this.inset });
+         }
+      }
+   }
+}

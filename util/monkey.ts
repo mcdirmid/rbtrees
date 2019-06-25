@@ -169,7 +169,7 @@ interface Iterable<T> {
    lasti(): T;
 
 }
-interface IterableIterator<T> extends Iterable<T>, IterableExt<T> {
+interface IterableIterator<T> extends IterableExt<T> {
 }
 abstract class IterableExt<T> implements Iterable<T> {
    abstract [Symbol.iterator](): Iterator<T>;
@@ -312,13 +312,11 @@ interface WeakMap<K extends object,V> {
 interface ISet<T> extends Iterable<T> {
    has(elem : T) : boolean;
 }
-interface IMutableSet<T> extends ISet<T> {
+interface Set<T> extends IterableExt<T> {
+   expand(act: (t: T, set: Set<T>) => void, rem: (t: T) => boolean): void;
    tryAdd(t : T) : boolean;
    delete(t : T) : boolean;
    adds(...t : T[]) : void;
-}
-interface Set<T> extends IterableExt<T>, IMutableSet<T> {
-   expand(act: (t: T, set: Set<T>) => void, rem: (t: T) => boolean): void;
 }
 class SetExt<T> extends Set<T> {
    expand(act: (t: T, set: Set<T>) => void, rem: (t: T) => boolean): void {

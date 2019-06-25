@@ -26,7 +26,9 @@ namespace dm {
          (this.inner != 0).assert();
       }
       // add some number to height, usually +1 or -1.
-      add(n: number): Height {
+      add(n: number): Height | this {
+         if (n == 0)
+            return this;
          let h = this.inner;
          if (h instanceof Array)
             return new BaseHeight([h[0], h[1] + n]) as Height;
@@ -163,7 +165,7 @@ namespace dm {
       abstract isCompressible(): boolean;
       // abstract isCompressible(parent?: RootParent | Node): boolean;
       // Compressed form (if any).
-      abstract compress(): Image;
+      abstract asCompressed(): [Image, Node[]];
       protected allUsed(vars: Set<string>) { }
    }
    // An RB tree's root element that doesn't have a parent. 
@@ -183,33 +185,37 @@ namespace dm {
       // the height represents not the height of the compressed parent tree, but
       // the height of "child"'s sibling (if any). In order to compress, child must have
       // same height as its sibling, so it is useful to track this. 
-      constructor(readonly child: Node, readonly height: Height | "empty") {
+      constructor(readonly child: Node, readonly height: Height | "empty", readonly hasOpen: boolean) {
          super();
       }
       // bind any v height to h in the entire tree (works down via recursion). 
       bindHeight(v: string, h: Height) {
          return new RootParent(
             this.child.bindHeight(v, h),
-            this.height == "empty" ? "empty" : this.height.bind(v, h));
+            this.height == "empty" ? "empty" : this.height.bind(v, h), this.hasOpen);
       }
       // same as bind height, except for axis. Only works from 
       // variable to variable. 
       bindAxis(from: string, to: string, flip: boolean): RootParent {
-         return new RootParent(this.child.bindAxis(from, to, flip), this.height);
+         return new RootParent(this.child.bindAxis(from, to, flip), this.height, this.hasOpen);
       }
       // can only be compressed if child can be compressed, child is not red,
       // and child has same height as sibling (if any).
       isCompressible() {
          if (!this.child.isCompressible() || this.child.color == "red")
             return false;
+         else if (this.child.color == "unknown" && !this.hasOpen)
+            return false;
          else if (this.height != "empty" && !this.child.height.equals(this.height))
             return false;
          else return true;
       }
       // compresses into a standalone tree.
-      compress() { return JustTree; }
+      asCompressed(): [Root, Node[]] {
+         return [JustTree, this.child.asCompressed()[1]];
+      }
       setHeight(value: Height) {
-         return new RootParent(this.child, value) as this;
+         return new RootParent(this.child, value, this.hasOpen) as this;
       }
       // grab all used variables
       protected allUsed(vars: Set<string>) {
@@ -270,7 +276,7 @@ namespace dm {
    class JustTree0 extends Root {
       get adbg() { return "T"; }
       isCompressible() { return false; }
-      compress(): this { throw new Error(); }
+      asCompressed(): [this, Node[]] { return [this, []]; }
       bindHeight() { return this; }
    }
    export const JustTree = new JustTree0();
@@ -298,7 +304,7 @@ namespace dm {
       }
       constructor(
          readonly name: string,
-         readonly color: "red" | "black",
+         readonly color: "red" | "black" | "unknown",
          readonly axis: Axis,
          readonly left: NodeChild,
          readonly right: NodeChild) {
@@ -307,24 +313,35 @@ namespace dm {
       // node height is the height of its leaves + 1 if the node is black.
       get height(): Height {
          let h = this.left.height;
-         if (this.color == "black")
+         if (this.color == "black" || this.color == "unknown")
             return h.add(1);
          else return h;
       }
+      canCompress(child: NodeChild) {
+         if (!child.isCompressible())
+            return false;
+         else if (this.color == "red" && child.color != "black")
+            return false;
+         else if (this.color == "unknown" && child.color != "black" && !(child instanceof Leaf && child.hasOpen))
+            return false;
+         else if (child instanceof Node && child.color == "unknown")
+            return false;
+         else return true;
+      }
+
+
       isCompressible() {
-         // for a node to be compressed, both of its children must be compressible.
-         if (!this.left.isCompressible() || !this.right.isCompressible())
+         if (!this.canCompress(this.left) || !this.canCompress(this.right))
             return false;
-         // and its children must have the same height.
          else if (!this.left.height.equals(this.right.height))
-            return false;
-         else if (this.color == "red" && (this.left.color != "black" || this.right.color != "black"))
             return false;
          else return true;
       }
       // just turn the node into a leaf!
-      compress(): Leaf {
-         return new Leaf(this.height, this.color == "black" ? "black" : "unknown");
+      asCompressed(): [Leaf, Node[]] {
+         let left = this.left.asCompressed()[1];
+         let right = this.right.asCompressed()[1];
+         return [new Leaf(this.height, this.color == "black" ? "black" : "unknown", false), left.concat(right).concat([this])];
       }
       equals(other: NodeChild): false { return false; }
       bindHeight(k: string, h: Height): Node {
@@ -345,22 +362,23 @@ namespace dm {
          return new Node(this.name, this.color, axis, left, right);
       }
       allUsed(vars: Set<string>) {
+         vars.add(this.name);
          this.axis.allUsed(vars);
          this.left.allUsed(vars);
          this.right.allUsed(vars);
       }
-
    }
    // a compressed subtree that is parented by a node, is empty
    // if black and a height of 1 (as per RB tree abstractions);
    export class Leaf extends BaseNodeOrLeaf implements HasExplicitHeight {
       get adbg() { return "lf" + this.height.adbg + (this.color == "black" ? "b" : ""); }
-      constructor(readonly height: Height, readonly color: "black" | "unknown") {
+      constructor(readonly height: Height, readonly color: "black" | "unknown", readonly hasOpen: boolean) {
          super();
+         (!this.hasOpen || this.color == "unknown").assert();
       }
       // already compressed. 
       isCompressible() { return true; }
-      compress(): this { throw new Error(); }
+      asCompressed(): [this, Node[]] { return [this, []]; }
 
       equals(other: NodeChild) {
          if ((!(other instanceof Leaf)))
@@ -368,10 +386,10 @@ namespace dm {
          return this.height.equals(other.height) && this.color == other.color;
       }
       bindHeight(k: string, h: Height) {
-         return new Leaf(this.height.bind(k, h), this.color);
+         return new Leaf(this.height.bind(k, h), this.color, this.hasOpen);
       }
       bindAxis(from: string, to: string, flip: boolean): this { return this; }
-      setHeight(value: Height) { return new Leaf(value, this.color) as this; }
+      setHeight(value: Height) { return new Leaf(value, this.color, this.hasOpen) as this; }
       allUsed(vars: Set<string>) { this.height.allUsed(vars); }
    }
 }
@@ -525,6 +543,24 @@ namespace dm {
             return this.push(RightAE) as (NodeAddress | LeafAddress);
          else return false;
       }
+      find(p: (addr: Address0) => boolean): Address0 | false {
+         if (p(this))
+            return this;
+         else for (let c of this.image.children(this as any as Address)) {
+            let ret = c.find(p);
+            if (ret)
+               return ret;
+         }
+         return false;
+      }
+      replaceRoot(root: Root): this {
+         if (!this.previous)
+            return root.addr as any as this;
+         else {
+            let previous = (this.previous as Address).replaceRoot(root);
+            return this.make(previous, this.at) as any as this;
+         }
+      }
    }
    // Address interface, upgrades various types to be 
    // more expressive without requiring extra glue code.
@@ -535,6 +571,7 @@ namespace dm {
       replace(elem: Leaf): LeafAddress;
       replace(elem: Node): NodeAddress;
       replace(elem: Leaf): LeafAddress;
+      find(p: (addr: Address) => boolean): Address | false;
    }
    interface CompositeAddress extends Address {
       readonly root: RootParent;
@@ -588,7 +625,7 @@ namespace dm {
    const ChildAE: AddrElem = new ad.AddrElem<Image>("child",
       (e: RootParent) => { return e.child; },
       (e: RootParent, child: Node) => {
-         return new RootParent(child, e.height);
+         return new RootParent(child, e.height, e.hasOpen);
       }
    );
    const LeftAE: AddrElem = new ad.AddrElem<Image>("left",
@@ -608,11 +645,16 @@ namespace dm {
       // we are too lazy to track precisely how a node's address
       // has changed (if any). This is O(N).
       seek(a: Address, name: string): NodeAddress | false;
+      children(a: Address): (NodeAddress | LeafAddress)[];
    }
    Image.prototype.seek = function () { return false; }
+   Image.prototype.children = function () { return []; }
    RootParent.prototype.seek = function (addr: RootParentAddress, name) {
       let self = this as RootParent;
       return self.child.seek(addr.child, name);
+   }
+   RootParent.prototype.children = function (a: RootParentAddress) {
+      return [a.child];
    }
    Node.prototype.seek = function (addr: NodeAddress, name): NodeAddress | false {
       let self = this as Node;
@@ -621,6 +663,9 @@ namespace dm {
       let left = self.left.seek(addr.left, name);
       let right = self.right.seek(addr.right, name);
       return left ? left : right;
+   }
+   Node.prototype.children = function (a: NodeAddress) {
+      return [a.left, a.right];
    }
 }
 // now we can start with the transmutations! Everything from now on until
@@ -656,7 +701,7 @@ namespace dm {
    // manipulations for RootParent. 
    export interface RootParent {
       // try to compress this root parent into a unified tree.
-      tryCompress(addr: RootParentAddress): (() => Address) | false;
+      tryCompress(addr: RootParentAddress): (() => [Address, Node[]]) | false;
       // try to expand this root parent. P is the name of a new parent
       // node, G is the name of a new grandparent node, as needed.
       tryExpand(addr: RootParentAddress): ((P: string, G: string) => {
@@ -664,6 +709,17 @@ namespace dm {
          readonly red: RootParentAddress,
          readonly empty: RootParentAddress,
       }) | false;
+
+      tryExpandHalf(addr: RootParentAddress): ((P: string) => {
+         readonly notEmpty: RootParentAddress;
+         readonly empty: RootParentAddress,
+      }) | false;
+
+      tryExpandHalf2(addr: RootParentAddress): ((G: string) => {
+         readonly black: RootParentAddress;
+         readonly red: RootParentAddress,
+      }) | false;
+
    }
 
    RootParent.prototype.tryCompress = function (addr) {
@@ -671,7 +727,10 @@ namespace dm {
       (addr.image == self).assert();
       if (!self.isCompressible())
          return false;
-      return () => self.compress().addr;
+      return () => {
+         let [a, b] = self.asCompressed();
+         return [a.addr, b];
+      }
    }
    RootParent.prototype.tryExpand = function (addr) {
       let self = this as RootParent;
@@ -685,13 +744,13 @@ namespace dm {
             throw new Error();
          // construct 3 cases: black parent, red parent and black grand parent, 
          // and empty (no parent). 
-         let bn = new Node(P, "black", Axis.Wild, self.child, new Leaf(self.height, "unknown"));
-         let black = new RootParent(bn, self.height.add(1));
+         let bn = new Node(P, "black", Axis.Wild, self.child, new Leaf(self.height, "unknown", false));
+         let black = new RootParent(bn, self.height.add(1), false);
 
-         let rrn = new Node(P, "red", Axis.Wild, self.child, new Leaf(self.height, "black"));
-         let rbn = new Node(G, "black", Axis.Wild, rrn, new Leaf(self.height, "unknown"));
-         let red = new RootParent(rbn, self.height.add(1));
-         let empty = new RootParent(self.child, "empty");
+         let rrn = new Node(P, "red", Axis.Wild, self.child, new Leaf(self.height, "black", false));
+         let rbn = new Node(G, "black", Axis.Wild, rrn, new Leaf(self.height, "unknown", false));
+         let red = new RootParent(rbn, self.height.add(1), false);
+         let empty = new RootParent(self.child, "empty", false);
          return {
             black: addr.replace(black),
             red: addr.replace(red),
@@ -699,6 +758,58 @@ namespace dm {
          };
       }
       return false;
+   }
+   RootParent.prototype.tryExpandHalf = function (addr) {
+      let self = this as RootParent;
+      (addr.image == self).assert();
+      // known empty root parents cannot be expanded
+      // as their child node are the acutal roots. 
+      if (self.height == "empty" || self.hasOpen)
+         return false;
+      return (P) => {
+         if (self.height == "empty")
+            throw new Error();
+         // construct 3 cases: black parent, red parent and black grand parent, 
+         // and empty (no parent). 
+         let un = new Node(P, "unknown", Axis.Wild, self.child, new Leaf(self.height, "unknown", true));
+         let unknown = new RootParent(un, self.height.add(1), true);
+         let empty = new RootParent(self.child, "empty", false);
+         return {
+            notEmpty: addr.replace(unknown),
+            empty: addr.replace(empty),
+         };
+      }
+      return false;
+   }
+   RootParent.prototype.tryExpandHalf2 = function (addr) {
+      let self = this as RootParent;
+      if (!self.hasOpen || self.child.color != "unknown" || self.height == "empty")
+         return false;
+      return (G) => {
+         let n = self.child;
+         let [bl, br] = [n.left, n.right];
+         let [rl, rr] = [n.left, n.right];
+         if (n.left instanceof Leaf && n.left.hasOpen) {
+            bl = new Leaf(n.left.height, "unknown", false);
+            rl = new Leaf(n.left.height, "black", false);
+         }
+         if (n.right instanceof Leaf && n.right.hasOpen) {
+            br = new Leaf(n.right.height, "unknown", false);
+            rr = new Leaf(n.right.height, "black", false);
+         }
+         let bn = new Node(n.name, "black", n.axis, bl, br);
+         let black = new RootParent(bn, self.height, false);
+
+         let rn = new Node(n.name, "red", n.axis, rl, rr);
+         if (self.height == "empty")
+            throw new Error();
+         let gn = new Node(G, "black", Axis.Wild, rn, new Leaf(self.height.add(-1), "unknown", false));
+         let red = new RootParent(gn, self.height, false);
+         return {
+            red: red.addr,
+            black: black.addr,
+         }
+      }
    }
 }
 namespace dm {
@@ -721,23 +832,41 @@ namespace dm {
 
    Leaf.prototype.tryExpand = function (addr) {
       let self = this as Leaf;
-      if (self.color == "unknown")
+      if (self.color == "unknown") {
+         if (self.hasOpen) {
+            let n = addr.previous.image;
+            if (n.color != "unknown")
+               return false;
+            if (!(addr.previous.previous.image instanceof RootParent))
+               return false;
+         }
+
          return (C) => {
             // if color is unknown, expands to either a black leaf
             // or a red node with two black leafs.
-            let lfb = new Leaf(self.height, "black");
+            let lfb = new Leaf(self.height, "black", false);
             let red = new Node(C, "red", Axis.Wild, lfb, lfb);
+            let addr0 = addr;
+            if (self.hasOpen) {
+               let n = addr0.previous.image;
+               let r = addr0.root;
+               (n.color == "unknown" && r.hasOpen).assert();
+               (addr0.previous.previous.image instanceof RootParent).assert();
+               n = new Node(n.name, "black", n.axis, n.left, n.right);
+               r = new RootParent(n, r.height, false);
+               addr0 = addr0.replaceRoot(r);
+            }
             return {
                tag: "unknown",
                black: addr.replace(lfb),
-               red: addr.replace(red),
+               red: addr0.replace(red),
             }
          }
-      if (self.height.equals(1)) // a black leaf with 1 height is already nil. 
+      } if (self.height.equals(1)) // a black leaf with 1 height is already nil. 
          return false;
       return (C) => {
          // black child, its leafs are reduced by one. 
-         let lfu = new Leaf(self.height.add(-1), "unknown");
+         let lfu = new Leaf(self.height.add(-1), "unknown", false);
          let node = new Node(C, "black", Axis.Wild, lfu, lfu);
          if (self.height.tag == "var" && self.height.varAdjust <= 0) {
             // might only be empty if (1) height has var and (2)
@@ -768,7 +897,7 @@ namespace dm {
    // node has the most manipulations. 
    export interface Node {
       // compress or not.
-      tryCompress(addr: NodeAddress): false | (() => LeafAddress);
+      tryCompress(addr: NodeAddress): false | (() => [LeafAddress | NodeAddress, Node[]]);
       // rotate node up to parent's location in a way that preserves
       // binary tree order.
       tryRotateUp(addr: NodeAddress): false | (() => NodeAddress);
@@ -781,20 +910,41 @@ namespace dm {
       // flip the axis on this node, adjust axis parameter accordingly.
       doFlipAxis(addr: NodeAddress): NodeAddress;
       // flip node color from red to black or vice versa.
-      doFlipColor(addr: NodeAddress): NodeAddress;
+      tryFlipColor(addr: NodeAddress): false | (() => [NodeAddress, (string | [string,string])]);
+      tryDelete(addr: NodeAddress): false | (() => Address);
    }
-   Node.prototype.tryCompress = function (addr) {
+   Node.prototype.tryCompress = function (addr): false | (() => [(LeafAddress | NodeAddress), Node[]]) {
       let self = this as Node;
       (addr.image == self).assert();
       // we only need to aadd a check to make sure
       // our parent isn't root, if so compressions
       // can't happen.. 
-      if (addr.previous.image instanceof RootParent)
-         return false;
+      if (addr.previous.image instanceof RootParent) {
+         // we might be able to "promote" a left or right node.
+         if (self.color == "red")
+            return false;
+         let parent = addr.previous.image;
+         let [a, b] = self.left instanceof Node ? [self.left, self.right] : [self.right, self.left];
+         if (!(a instanceof Node) || !(b instanceof Leaf) || !self.canCompress(b))
+            return false;
+         if (parent.height != "empty" && !parent.height.equals(b.height.add(1)))
+            return false;
+         return () => {
+            if (!(a instanceof Node) || !(b instanceof Leaf))
+               throw new Error();
+            if (self.color == "black" && a.color == "red") {
+               let na = new Node(a.name, "unknown", a.axis, a.left, a.right);
+               return [new RootParent(na, b.height.add(1), true).addr.child, [self]];
+            } else return [new RootParent(a, b.height, false).addr.child, [self]];
+         }
+      }
       (addr.previous.image instanceof Node).assert();
       if (!self.isCompressible())
          return false;
-      return () => addr.replace(self.compress());
+      return () => {
+         let [a, b] = self.asCompressed();
+         return [addr.replace(a), b];
+      }
    }
 
    Node.prototype.tryRotateUp = function (addr) {
@@ -943,12 +1093,50 @@ namespace dm {
          else return na;
       }
    }
-   Node.prototype.doFlipColor = function (addr) {
+   Node.prototype.tryFlipColor = function (addr) : false | (() => [NodeAddress, (string | [string,string])]) {
       let self = this as Node;
-      (addr.image == self).assert();
-      return addr.replace(new Node(
-         self.name, self.color == "red" ? "black" : "red", self.axis, self.left, self.right
-      ))
+      if (self.color == "unknown")
+         return false;
+      if (addr.previous.image instanceof RootParent && addr.previous.image.hasOpen) {
+         // swap color. 
+         return () => {
+            let naddr = addr.find(a => a.image instanceof Node && a.image.color == "unknown") as NodeAddress;
+            // give it my color
+            naddr = naddr.replace(new Node(naddr.image.name, self.color, naddr.image.axis, naddr.image.left, naddr.image.right));
+            addr = naddr.root.addr.child;
+            (addr.image.name == self.name).assert();
+            self = addr.image;
+            return [addr.replace(new Node(self.name, "unknown", self.axis, self.left, self.right)), [self.name, naddr.image.name]];
+         }
+      }
+      return () => {
+         (addr.image == self).assert();
+         return [addr.replace(new Node(
+            self.name, self.color == "red" ? "black" : "red", self.axis, self.left, self.right
+         )), self.name];
+      };
+   }
+
+   Node.prototype.tryDelete = function (addr) {
+      let self = this as Node;
+      let promote: Node | Leaf;
+      if (self.color == "unknown")
+         return false;
+      else if (self.left.color == "black" && self.left.height.concrete == 1)
+         promote = self.right;
+      else if (self.right.color == "black" && self.right.height.concrete == 1)
+         promote = self.left;
+      else return false;
+      if (addr.previous.image instanceof RootParent && promote instanceof Leaf) {
+         let r = addr.previous.image;
+         if (r.height != "empty")
+            return false;
+         return () => JustTree.addr;
+      }
+      if (addr.previous.image instanceof RootParent && !(promote instanceof Node))
+         return false;
+      // promote.
+      return () => addr.replaceE(promote) as (NodeAddress | LeafAddress);
    }
 }
 
@@ -959,19 +1147,19 @@ namespace dm {
    export interface BaseHeight {
       unify(into: Height, txt: {
          readonly hS: Map<string, Height>
-      }): boolean;
+      }): false | (() => void);
    }
    export interface Axis {
       unify(into: Axis, txt: {
          readonly aS: Map<string, Axis>
-      }): boolean;
+      }): false | (() => void);
    }
    // height unification will bind into height 
    // if var. 
-   BaseHeight.prototype.unify = function (into, txt) {
+   BaseHeight.prototype.unify = function (into, txt): false | (() => void) {
       let self = this as Height;
       if (into.tag == "concrete") // if not var, must be equal.
-         return self.equals(into);
+         return !self.equals(into) ? false : () => { };
       if (self.tag == "concrete" && self.concrete <= into.varAdjust)
          return false;
       // if into is k + 2 and self is h + 1, 
@@ -979,26 +1167,51 @@ namespace dm {
       // giving us k = h - 1;
 
       self = self.add(-into.varAdjust);
-      return self.equals(txt.hS.getOrSet(into.varName, () => self));
+      if (txt.hS.has(into.varName))
+         return self.equals(txt.hS.get(into.varName)) ? () => { } : false;
+      txt.hS.set(into.varName, self);
+      return () => txt.hS.delete(into.varName);
    }
-   Axis.prototype.unify = function (into, txt) {
+   Axis.prototype.unify = function (into, txt): false | (() => void) {
       let self = this as Axis;
-      if (!into.isVar())
-         return self.equals(into);
-      else return self.equals(txt.aS.getOrSet(into.varName, () => self));
+      if (into == Axis.Wild)
+         return () => { };
+      else if (self == Axis.Wild)
+         return false;
+      else if (!into.isVar())
+         return self.equals(into) ? () => { } : false;
+      if (txt.aS.has(into.varName))
+         return txt.aS.get(into.varName).equals(self) ? () => { } : false;
+      txt.aS.set(into.varName, self);
+      return () => txt.aS.delete(into.varName);
    }
+
+
 
    export class Unify {
       readonly hS = new Map<string, Height>();
       readonly aS = new Map<string, Axis>();
       readonly nS = new Map<string, string>();
+      readonly flipColors = new Array<string>();
+      readonly flipAxes = new Array<string>();
+      get adbg() {
+         return "[" +
+            this.hS.mapi(([a, b]) => a + " = " + b).concati(
+               this.aS.mapi(([a, b]) => a + " = " + b)
+            ).concati(
+               this.nS.mapi(([a, b]) => a + " = " + b)
+            ).concati(
+               this.flipColors.map(a => "flipC(" + a + ")")
+            ).concati(
+               this.flipAxes.map(a => "flipA(" + a + ")")
+            ).format() + "]";
+      }
    }
    export interface Image {
       readonly hash: string;
       checkUnify(into: Image): Unify | false;
-      unify(into: Image, txt: Unify): boolean;
+      unify(into: Image, txt: Unify): false | (() => void);
    }
-
    Image.prototype.checkUnify = function (into) {
       let self = this as Image;
       let txt = new Unify();
@@ -1008,7 +1221,8 @@ namespace dm {
       let self = this as RootParent;
       if (!(into instanceof RootParent))
          return false;
-      if (!self.child.unify(into.child, txt))
+
+      if (self.hasOpen && !into.hasOpen)
          return false;
       // since a root parent of "k" height can
       // expand to empty, we can pass through
@@ -1018,27 +1232,51 @@ namespace dm {
          return false;
       else if (!self.height.unify(into.height, txt))
          return false;
-
-      return true;
+      return self.child.unify(into.child, txt);
    }
    JustTree.unify = function (into) {
-      return into == JustTree;
+      return into == JustTree ? () => { } : false;
    }
    Node.prototype.unify = function (into, txt) {
       // everything must unify. 
       let self = this as Node;
       if (!(into instanceof Node))
          return false;
-      else if (into.color != self.color)
+      else if ((self.color == "unknown") != (into.color == "unknown"))
          return false;
-      else if (!self.left.unify(into.left, txt))
+      let flipped = false;
+      let left0 = self.left.unify(into.left, txt);
+      let right0 = left0 ? self.right.unify(into.right, txt) : false;
+      if (self.axis == dm.Axis.Wild && (!left0 || !right0)) {
+         right0 ? right0() : left0 ? left0() : {};
+         left0 = self.right.unify(into.left, txt);
+         right0 = left0 ? self.left.unify(into.right, txt) : false;
+         flipped = true;
+      }
+      let axis0 = (!left0 || !right0) ? false : self.left.equals(self.right) ? () => {} :  self.axis.unify(into.axis, txt);
+      if (!left0 || !right0 || !axis0) {
+         left0 ? left0() : {};
+         right0 ? right0() : {};
+         axis0 ? axis0() : {};
          return false;
-      else if (!self.right.unify(into.right, txt))
-         return false;
-      else if (!self.left.equals(self.right) && !self.axis.unify(into.axis, txt))
-         return false;
+      }
       txt.nS.set(into.name, self.name);
-      return true;
+      if (into.color != "unknown" && self.color != into.color) {
+         txt.flipColors.push(self.name);
+      }
+      if (flipped)
+         txt.flipAxes.push(self.name);
+      let [left, right, axis] = [left0, right0, axis0];
+      return () => {
+         txt.nS.delete(into.name);
+         let idx = txt.flipColors.indexOf(self.name);
+         if (idx >= 0)
+            txt.flipColors.splice(idx, 1);
+         idx = txt.flipAxes.indexOf(self.name);
+         if (idx >= 0)
+            txt.flipAxes.splice(idx, 1);
+         axis(); right(); left();
+      }
    }
    Leaf.prototype.unify = function (into, txt) {
       let self = this as Leaf;
@@ -1047,17 +1285,18 @@ namespace dm {
       // only check self color if into color is black,
       // otherwise into is unknown which can match both
       // black and unkown. 
-      else if (into.color == "black" && self.color != "black")
+      else if (self.color == "unknown" && into.color != "unknown")
          return false;
-      else if (!self.height.unify(into.height, txt))
+      else if (self.hasOpen && !into.hasOpen)
          return false;
-      else return true;
+      return self.height.unify(into.height, txt);
    }
    Object.defineProperty(RootParent.prototype, "hash", {
       get: function () {
          let self = this as RootParent;
          // scrub out height since unification
          // doesn't rely on equal heights. 
+         // normalize axis. 
          return "R:" + self.child.hash;
       }, enumerable: true, configurable: true,
    })
@@ -1067,8 +1306,11 @@ namespace dm {
    Object.defineProperty(Node.prototype, "hash", {
       get: function () {
          let self = this as Node;
-         // scrub out axis 
-         return "N:" + self.color + "[l:" + self.left.hash + "][r:" + self.right.hash + "]";
+         let left = self.left.hash;
+         let right = self.right.hash;
+         if (left.localeCompare(right) > 0)
+            [left,right] = [right,left];
+         return "N[l:" + left + "][" + right + "]";
       }, enumerable: true, configurable: true,
    })
    Object.defineProperty(Leaf.prototype, "hash", {
@@ -1082,11 +1324,11 @@ namespace dm {
 
 namespace dmtest {
    export function test() {
-      let empty = new dm.Leaf(dm.BaseHeight.usingVar("k", 0), "black");
+      let empty = new dm.Leaf(dm.BaseHeight.usingVar("k", 0), "black", false);
       { // check rotate.
          let N = new dm.Node("N", "red", dm.Axis.Wild, empty, empty);
          let P = new dm.Node("P", "black", dm.Axis.Wild, N, empty);
-         let R = new dm.RootParent(P, dm.BaseHeight.usingVar("k", 1));
+         let R = new dm.RootParent(P, dm.BaseHeight.usingVar("k", 1), false);
          let Paddr = R.addr.child;
          let Naddr = Paddr.left as dm.NodeAddress;
          console.log(Naddr.root.adbg);
@@ -1094,14 +1336,14 @@ namespace dmtest {
             let f = R.tryCompress(R.addr);
             if (!f)
                throw new Error();
-            let Raddr = f();
+            let Raddr = f()[0];
             console.log(Raddr.image.adbg);
          }
          {
             let f = N.tryCompress(Naddr);
             if (!f)
                throw new Error();
-            let Naddr0 = f();
+            let Naddr0 = f()[0];
             console.log(Naddr0.root.adbg);
          }
          {
@@ -1114,7 +1356,11 @@ namespace dmtest {
             let Naddr0 = g();
             console.log(Naddr0.root.adbg);
          }
-         console.log(N.doFlipColor(Naddr).root.adbg);
+
+         let f = N.tryFlipColor(Naddr);
+         if (!f)
+            throw new Error();
+         console.log(f()[0].root.adbg);
          {
             let f = R.tryExpand(R.addr);
             if (!f)
@@ -1129,9 +1375,9 @@ namespace dmtest {
             let f2 = ret.black.image.tryCompress(ret.black);
             if (!f0 || !f1 || !f2)
                throw new Error();
-            console.log(f0().image.adbg);
-            console.log(f1().image.adbg);
-            console.log(f2().image.adbg);
+            console.log(f0()[0].image.adbg);
+            console.log(f1()[0].image.adbg);
+            console.log(f2()[0].image.adbg);
             true.assert();
 
          }
@@ -1139,7 +1385,7 @@ namespace dmtest {
       console.log("XXXXXXXX");
       {
          let N = new dm.Node("N", "red", dm.Axis.Wild, empty, empty);
-         let R = new dm.RootParent(N, empty.height);
+         let R = new dm.RootParent(N, empty.height, false);
          console.log(R.adbg);
 
          let f0 = R.tryExpand(R.addr);
@@ -1180,16 +1426,26 @@ namespace dmtest {
                      if (!f0)
                         throw new Error();
                      N = f0();
-                     N = N.image.doFlipColor(N);
+                     {
+                        let f9 = N.image.tryFlipColor(N);
+                        if (!f9)
+                           throw new Error();
+                        N = f9()[0];
+                     }
                      let G = N.right as dm.NodeAddress;
-                     G = G.image.doFlipColor(G);
+                     {
+                        let f9 = G.image.tryFlipColor(G);
+                        if (!f9)
+                           throw new Error();
+                        G = f9()[0];
+                     }
                      console.log(G.root.adbg);
                      console.log("compress");
                      let R = G.root.addr;
                      let f = R.image.tryCompress(R);
                      if (!f)
                         throw new Error();
-                     let T = f();
+                     let T = f()[0];
                      console.log(T.image.adbg);
                   } else throw new Error();
                } else throw new Error();
