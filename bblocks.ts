@@ -1,4 +1,4 @@
-
+// the topology of a line/block document used to display/navigate instructions.
 namespace bbl {
    export type Undo = () => void;
    // the base class of all lines, which are divided into footers, headers, and instructions. 
@@ -12,6 +12,7 @@ namespace bbl {
       abstract get next(): Line;
       // immediate predecessor of this line.
       abstract get previous(): Line;
+      // last sub-line of this line (the visual last line of its sub-block, if any, or self)
       abstract get lastSubLine(): Line;
       // can this line be edited via the menu? 
       abstract canEdit(): boolean;
@@ -50,6 +51,7 @@ namespace bbl {
       isNestedIn(other: Line): boolean { return this.equals(other); }
       toString() { return this.adbg; }
    }
+   // a line that is an instruction. 
    export abstract class Instruction extends BaseLine {
       get tag() : "instruction" { return "instruction"; }
       get self(): Instruction { return this; }
@@ -133,44 +135,55 @@ namespace bbl {
       addInner?(): void;
       deleteInner?(): void;
    }
+   // a branching instruction. 
    export interface Switch extends Instruction {
       readonly cases: Case[];
       readonly footer: Footer;
       isSwitch(): true;
    }
+   // a line that is the header or footer of a block
    export abstract class HeaderFooter extends BaseLine { }
+   // a block provider (factory) is used to create the block anchored in a header.
    export interface BlockProvider {
       makeBlock(header : Header) : Block;
    }
-
-
    export abstract class Header extends HeaderFooter {
       get tag() : "header" { return "header"; }
+      // a header is either a procedure or a case. 
       abstract get self(): Proc | Case;
+      // procedure above this header. 
       abstract get proc() : Proc;
+      // block being headed by this header.
       readonly block: Block;
       constructor(provider : BlockProvider) {
          super();
+         // block creation point. 
          this.block = provider.makeBlock(this);
       }
+      // line that follows the block owned by this header. 
       abstract get nextFromLastInstruction(): Line;
       get next() {
          if (this.block.instructions.length > 0)
             return this.block.instructions[0];
          else return this.nextFromLastInstruction;
       }
+      // can only edit from this line if the block is empty. 
       canEdit() { return this.block.instructions.length == 0; }
+      // last sub-line of this block is either the last sub-line of its last instruction of its block (if any) or itself. 
       get lastSubLine() {
          return this.block.instructions.length > 0 ?
             this.block.instructions.last().lastSubLine : this;
       }
    }
+   // a case of a switch instruction, which the header of a block that deals with the case. 
    export abstract class Case extends Header {
       get self(): Case { return this; }
       get proc() : Proc { return this.owner.proc; }
+      // index in switch. 
       abstract get index(): number;
       abstract get owner(): Switch;
       get parent() { return this.owner.parent; }
+      // next from last is either the next case or the footer of the switch. 
       get nextFromLastInstruction(): Line {
          if (this.index < this.owner.cases.length - 1)
             return this.owner.cases[this.index + 1];
@@ -178,6 +191,8 @@ namespace bbl {
       }
       canDelete() { return this.owner.canDelete(); }
       get adbg() { return this.owner.adbg + ":" + this.index; }
+      // a case is empty if empty, closed if its last instruction (or last instructions of the last instruction's sub-blocks) 
+      // is a goto or return statement, or otherwise
       get status(): "open" | "broken" | "closed" {
          if (this.block.instructions.length == 0)
             return "open";
@@ -192,6 +207,9 @@ namespace bbl {
          super(owner.parent.owner.proc.provider);
       }
    }
+   // footer of a block owned by either a switch or procedure. 
+   // class-based variants for case and procedure aren't very useful,
+   // so we just use instanceof as needed to vary behavior inside this class.
    export abstract class Footer extends HeaderFooter {
       get tag() : "footer" { return "footer"; }
       get self(): Footer { return this; }
@@ -199,6 +217,8 @@ namespace bbl {
       get proc() : Proc { return this.owner.proc; }
       get parent() { return this.owner.parent; }
       get adbg() { return this.owner.adbg + "-footer"; }
+      // next instruction of footer is nothing if procedure, or
+      // the base next of its owner. 
       get next() {
          if (this.owner instanceof Proc)
             return null;
@@ -219,6 +239,8 @@ namespace bbl {
          }
       }
       get lastSubLine(): Footer { return this; }
+      // whether open, closed, or broken depeneds on a switches cases
+      // (closed only if all closed, open if any is open, otherwise broken).
       get status(): "open" | "closed" | "broken" {
          if (this.owner instanceof Proc)
             return "closed";
@@ -247,13 +269,8 @@ namespace bbl {
       }
    }
    export type Line = Instruction | Header | Footer;
-
-   export interface Host {
-
-   }
-
+   // procedure header.
    export abstract class Proc extends Header {
-      readonly host : Host;
       abstract get footer() : Footer;
       get proc(): Proc { return this; }
       constructor(readonly provider : BlockProvider) {
@@ -263,16 +280,17 @@ namespace bbl {
       get parent(): null { return null; }
       get nextFromLastInstruction() { return this.footer; }
       canDelete(): false { return false; }
+      // empty, will fill in via an override. 
       register(line: Line): void { }
       unregister(line: Line): void { }
       invalidate(block: Block): void { }
       get subLines() : [Footer] { return [this.footer]; }
-
-
    }
+   // a block of instructions. 
    export class Block extends Object {
       get adbg(): string { return this.owner.adbg + "-block"; }
       readonly instructions = new Array<Instruction>();
+      // invalidate layout (if any)
       invalidate(): void {
          this.owner.proc.invalidate(this);
       }
@@ -285,7 +303,6 @@ namespace bbl {
          }
          return this.depth0;
       }
-
       constructor(readonly owner: Case | Proc) {
          super();
       }

@@ -24,8 +24,12 @@ namespace rndm {
       tryFlipColor(addr: dm.NodeAddress): false | rn.Do { return false; }
       tryFlipAxis(addr: dm.NodeAddress): false | rn.Do { return false; }
       tryRotateUp(addr: dm.NodeAddress): false | rn.Do { return false; }
-      tryCompress(addr: dm.NodeAddress | dm.RootParentAddress): false | rn.Do { return false; }
-      tryHeightVar(addr: dm.LeafAddress | dm.RootParentAddress): false | rn.Do { return false; }
+      tryCompress(addr: dm.NodeAddress | dm.RootParentAddress): false | rn.Do {
+         return false;
+      }
+      tryHeightVar(addr: dm.LeafAddress | dm.RootParentAddress): false | rn.Do {
+         return false;
+      }
       tryDelete(addr: dm.NodeAddress): false | rn.Do { return false; }
 
       tryExpandLeaf(addr: dm.LeafAddress): false | rn.Do { return false; }
@@ -36,7 +40,7 @@ namespace rndm {
       tryExpandRootHalf2(addr: dm.RootParentAddress): false | rn.Do { return false; }
 
    }
-   function or(...aS: (() => false | rn.Do)[]) : () => false | rn.Do {
+   function or(...aS: (() => false | rn.Do)[]): () => false | rn.Do {
       return () => {
          for (let a of aS) {
             let a0 = a();
@@ -74,50 +78,58 @@ namespace rndm {
       });
       // if black, then put a black dot on its top corner.
       if (self.color == "black" || self.hasOpen)
-         txt.fillSmallCircle((sz.x / 2).vec(0), self.hasOpen ? RGB.white : RGB.black, null, self.hasOpen ? true : undefined);
+         txt.fillSmallCircle(
+            (sz.x / 2).vec(0),
+            self.hasOpen ? RGB.white : RGB.black,
+            null,
+            self.hasOpen ? true : undefined
+         );
       return [sz, (sz.x / 2)];
    }
-   dm.RootParent.prototype.renderCore0 = function (txt, addr: dm.RootParentAddress) {
-      let self = this as dm.RootParent;
-      let lbl = self.height == "empty" ? "ϵ" : self.height.adbg;
-      // ax is anchor or zero if anchor doesn't exist yet. 
-      let ax = self.anchorX ? self.anchorX : 0;
-      let r = txt.standardRad(lbl);
-      let tsz = txt.strokeTriangle((ax - r).vec(0), r * 2, [lbl, self.height != "empty"], {
-         label: "main",
-         addr: addr,
-         acts: [
-            //["down", () => txt.host.tryExpandRoot(addr)],
-            ["down", or(() => txt.host.tryExpandRootHalf(addr), () => txt.host.tryExpandRootHalf2(addr))],
-            ["up", () => txt.host.tryCompress(addr)],
-            ["left", () => txt.host.tryHeightVar(addr)],
-         ]
-      });
-      // h is where the child will go, draw a line to child. 
-      let h = Math.ceil(tsz.y) + txt.SW * 2;
-      txt.g.strokeLine([ax.vec(Math.ceil(tsz.y)), ax.vec(h)])
-      // compute child x position, usually 0 since
-      // child is wider than triangle. 
-      // only compute cx any further if anchors
-      // are already computed. 
-      let cx = 0;
-      if (self.child.anchorX && self.anchorX) {
-         (self.child.anchorX <= ax).assert();
-         cx = ax - self.child.anchorX;
-      }
-      txt.renderImage(self.child, (cx).vec(h), addr.child);
-      {
-         (self.child.anchorX != null && self.child.size != null).assert();
-         // usually the child is wider, but just in case
-         // max with the triangle size. 
-         let ax = self.child.anchorX.max(tsz.x / 2)
-         let w = ax +
-            (self.child.size.x - self.child.anchorX).max(tsz.x / 2);
+   dm.RootParent.prototype.renderCore0 =
+      function (txt, addr: dm.RootParentAddress) {
+         let self = this as dm.RootParent;
+         let lbl = self.height == "empty" ? "ϵ" : self.height.adbg;
+         // ax is anchor or zero if anchor doesn't exist yet. 
+         let ax = self.anchorX ? self.anchorX : 0;
+         let r = txt.standardRad(lbl);
+         let tsz = txt.strokeTriangle((ax - r).vec(0), r * 2, [lbl, self.height != "empty"], {
+            label: "main",
+            addr: addr,
+            acts: [
+               //["down", () => txt.host.tryExpandRoot(addr)],
+               ["down",
+                  or(() => txt.host.tryExpandRootHalf(addr),
+                     () => txt.host.tryExpandRootHalf2(addr))],
+               ["up", () => txt.host.tryCompress(addr)],
+               ["left", () => txt.host.tryHeightVar(addr)],
+            ]
+         });
+         // h is where the child will go, draw a line to child. 
+         let h = Math.ceil(tsz.y) + txt.SW * 2;
+         txt.g.strokeLine([ax.vec(Math.ceil(tsz.y)), ax.vec(h)])
+         // compute child x position, usually 0 since
+         // child is wider than triangle. 
+         // only compute cx any further if anchors
+         // are already computed. 
+         let cx = 0;
+         if (self.child.anchorX && self.anchorX) {
+            (self.child.anchorX <= ax).assert();
+            cx = ax - self.child.anchorX;
+         }
+         txt.renderImage(self.child, (cx).vec(h), addr.child);
+         {
+            (self.child.anchorX != null && self.child.size != null).assert();
+            // usually the child is wider, but just in case
+            // max with the triangle size. 
+            let ax = self.child.anchorX.max(tsz.x / 2)
+            let w = ax +
+               (self.child.size.x - self.child.anchorX).max(tsz.x / 2);
 
-         (!self.size || self.size.x.dist(w) <= .01).assert();
-         return [Math.ceil(w).vec(Math.ceil(h + self.child.size.y)), Math.ceil(ax)];
+            (!self.size || self.size.x.dist(w) <= .01).assert();
+            return [Math.ceil(w).vec(Math.ceil(h + self.child.size.y)), Math.ceil(ax)];
+         }
       }
-   }
    // just a triangle.
    dm.JustTree.renderCore0 = function (txt, addr) {
       (this == dm.JustTree).assert();
@@ -140,7 +152,9 @@ namespace rndm {
       // did bubble up, we would have to be put this call
       // after the main render). 
       txt.fillSmallCircle(ax.vec(r).add((r / 2).vec(-r / 2)),
-         self.color == "red" ? RGB.red : self.color == "black"? RGB.black : RGB.white, {
+         self.color == "red" ? RGB.red :
+            self.color == "black" ? RGB.black :
+               RGB.white, {
             label: "color",
             addr: addr,
             acts: [
@@ -203,13 +217,13 @@ namespace dm {
    // forward host on as a class rather than type
    // so it can be extended and implemented.
    export abstract class Host extends rndm.Host {
-      abstract root : dm.Root; 
+      abstract root: dm.Root;
       renderChild(pos: Vector2D, txt: rn.Context): Vector2D {
          if (!this.root)
             return Vector2D.Zero;
          txt.renderImage(this.root, pos, this.root.addr);
          return this.root.size;
-      }            
+      }
    }
 }
 // testing. 
@@ -254,7 +268,7 @@ namespace rndmtest {
             if (!f)
                throw new Error();
             return f()[0];
-         }         
+         }
          return this.f(f0);
       }
       tryFlipColor(addr: dm.NodeAddress): false | rn.Do {
@@ -290,11 +304,11 @@ namespace rndmtest {
    }
 
    export function test() {
-      let empty = new dm.Leaf(dm.BaseHeight.usingVar("k", 0), "black", false);
+      let empty = new dm.Leaf(dm.HeightImpl.usingVar("k", 0), "black", false);
       let N = new dm.Node("N", "red", dm.Axis.Wild, empty, empty);
       let P = new dm.Node("P", "red", dm.Axis.Wild, N, empty);
       let G = new dm.Node("G", "black", dm.Axis.Wild, P, empty);
-      let R = new dm.RootParent(G, dm.BaseHeight.usingVar("k", 1), false);
+      let R = new dm.RootParent(G, dm.HeightImpl.usingVar("k", 1), false);
 
       let top = ui2.Top.useWindow();
       let h = new Host(top);

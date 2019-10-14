@@ -1,6 +1,6 @@
 
 // domain classes for RB tree abstract representation
-// indepdent of rendering or anything else fancy. 
+// independent of rendering or anything else fancy. 
 
 // first, some basic definitions.
 // A height is used to describe the height of a tree or 
@@ -10,10 +10,10 @@
 // convenient for forming an abstract image of tree
 // structure. 
 namespace dm {
-   export type Height = HeightWithVar | HeightConcrete;
-   // used to describe tree height, either concetely as a number
-   // or abstractly as an expression. 
-   export class BaseHeight extends Object {
+   // height as in the black node height of a red black tree or sub-tree.
+   export type Height = HeightAbstract | HeightConcrete;
+   // implement both abstract and concrete heights in same class. 
+   export class HeightImpl extends Object {
       // debug printout that appears first in debugger local variable view. 
       get adbg() {
          let h = this.inner;
@@ -21,24 +21,25 @@ namespace dm {
             return h[0] + (h[1] == 0 ? "" : h[1] < 0 ? " - " + (-h[1]) : " + " + h[1]);
          else return h.toString();
       }
+      // number for concrete height, string (var name) + number (modifier) for abstract height.
       private constructor(private readonly inner: number | [string, number]) {
          super();
          (this.inner != 0).assert();
       }
       // add some number to height, usually +1 or -1.
       add(n: number): Height | this {
-         if (n == 0)
+         if (n == 0) // nothing added.
             return this;
          let h = this.inner;
          if (h instanceof Array)
-            return new BaseHeight([h[0], h[1] + n]) as Height;
-         else return new BaseHeight(h + n) as Height;
+            return new HeightImpl([h[0], h[1] + n]) as Height;
+         else return new HeightImpl(h + n) as Height;
       }
       // height equality is deep.
       equals(other: Height | number): boolean {
          let self = this as Height;
          if (typeof other == "number")
-            return this.equals(BaseHeight.concrete(other));
+            return this.equals(HeightImpl.concrete(other));
          if (self.tag == "concrete") {
             if (other.tag != "concrete")
                return false;
@@ -58,13 +59,15 @@ namespace dm {
       }
       // promote height to abstract if concrete (otherwise return false). Var already
       // has a concrete binding to figure out equivalent translation. 
-      addVar(v: string, n: number): HeightWithVar | false {
+      addAbstract(v: string, n: number): HeightAbstract | false {
          if (this.inner instanceof Array)
             return false;
-         return new BaseHeight([v, this.inner - n]) as HeightWithVar;
+         return new HeightImpl([v, this.inner - n]) as HeightAbstract;
       }
-      static concrete(n: number) { return new BaseHeight(n) as HeightConcrete; }
-      static usingVar(v: string, n: number) { return new BaseHeight([v, n]) as HeightWithVar; }
+      static concrete(n: number) { return new HeightImpl(n) as HeightConcrete; }
+      static usingVar(v: string, n: number) {
+         return new HeightImpl([v, n]) as HeightAbstract;
+      }
 
       get varName() {
          return this.inner instanceof Array ? this.inner[0] : false;
@@ -85,13 +88,13 @@ namespace dm {
             vars.add(this.inner[0]);
       }
    }
-   export interface HeightWithVar extends BaseHeight {
+   export interface HeightAbstract extends HeightImpl {
       readonly tag: "var";
       readonly varName: string;
       readonly varAdjust: number;
       readonly concrete: false;
    }
-   export interface HeightConcrete extends BaseHeight {
+   export interface HeightConcrete extends HeightImpl {
       readonly tag: "concrete";
       readonly varName: false;
       readonly varAdjust: false;
@@ -178,14 +181,18 @@ namespace dm {
    // A root that is the parent of a node.
    export class RootParent extends Root implements HasExplicitHeight {
       get adbg() {
-         return "rt" + (this.height instanceof BaseHeight ? ":" + this.height.adbg : "") +
+         return "rt" + (this.height instanceof HeightImpl ? ":" + this.height.adbg : "") +
             "-" + this.child.adbg;
       }
       // constructed with a child and a height.
       // the height represents not the height of the compressed parent tree, but
       // the height of "child"'s sibling (if any). In order to compress, child must have
       // same height as its sibling, so it is useful to track this. 
-      constructor(readonly child: Node, readonly height: Height | "empty", readonly hasOpen: boolean) {
+      constructor(
+         readonly child: Node,
+         readonly height: Height | "empty",
+         readonly hasOpen: boolean
+      ) {
          super();
       }
       // bind any v height to h in the entire tree (works down via recursion). 
@@ -197,7 +204,11 @@ namespace dm {
       // same as bind height, except for axis. Only works from 
       // variable to variable. 
       bindAxis(from: string, to: string, flip: boolean): RootParent {
-         return new RootParent(this.child.bindAxis(from, to, flip), this.height, this.hasOpen);
+         return new RootParent(
+            this.child.bindAxis(from, to, flip),
+            this.height,
+            this.hasOpen
+         );
       }
       // can only be compressed if child can be compressed, child is not red,
       // and child has same height as sibling (if any).
@@ -239,7 +250,8 @@ namespace dm {
             {
                let last = prefix.length == 0 ? Z : prefix.last().charCodeAt(0);
                if (last < Z)
-                  prefix = prefix.substring(0, prefix.length - 1) + String.fromCharCode(last + 1);
+                  prefix = prefix.substring(0, prefix.length - 1) +
+                     String.fromCharCode(last + 1);
                else prefix = prefix + String.fromCharCode(A);
             }
          }
@@ -255,6 +267,7 @@ namespace dm {
          }
          return ret;
       }
+      // fresh variable names for heights and axes
       freshHeightName(preferred: string) {
          let vars = new Set<string>();
          this.allUsed(vars);
@@ -322,7 +335,11 @@ namespace dm {
             return false;
          else if (this.color == "red" && child.color != "black")
             return false;
-         else if (this.color == "unknown" && child.color != "black" && !(child instanceof Leaf && child.hasOpen))
+         else if (
+            this.color == "unknown" &&
+            child.color != "black" &&
+            !(child instanceof Leaf && child.hasOpen)
+         )
             return false;
          else if (child instanceof Node && child.color == "unknown")
             return false;
@@ -341,7 +358,10 @@ namespace dm {
       asCompressed(): [Leaf, Node[]] {
          let left = this.left.asCompressed()[1];
          let right = this.right.asCompressed()[1];
-         return [new Leaf(this.height, this.color == "black" ? "black" : "unknown", false), left.concat(right).concat([this])];
+         return [
+            new Leaf(this.height, this.color == "black" ? "black" : "unknown", false),
+            left.concat(right).concat([this])
+         ];
       }
       equals(other: NodeChild): false { return false; }
       bindHeight(k: string, h: Height): Node {
@@ -372,7 +392,11 @@ namespace dm {
    // if black and a height of 1 (as per RB tree abstractions);
    export class Leaf extends BaseNodeOrLeaf implements HasExplicitHeight {
       get adbg() { return "lf" + this.height.adbg + (this.color == "black" ? "b" : ""); }
-      constructor(readonly height: Height, readonly color: "black" | "unknown", readonly hasOpen: boolean) {
+      constructor(
+         readonly height: Height,
+         readonly color: "black" | "unknown",
+         readonly hasOpen: boolean
+      ) {
          super();
          (!this.hasOpen || this.color == "unknown").assert();
       }
@@ -389,7 +413,9 @@ namespace dm {
          return new Leaf(this.height.bind(k, h), this.color, this.hasOpen);
       }
       bindAxis(from: string, to: string, flip: boolean): this { return this; }
-      setHeight(value: Height) { return new Leaf(value, this.color, this.hasOpen) as this; }
+      setHeight(value: Height) {
+         return new Leaf(value, this.color, this.hasOpen) as this;
+      }
       allUsed(vars: Set<string>) { this.height.allUsed(vars); }
    }
 }
@@ -686,7 +712,7 @@ namespace dm {
       let self = this as HasExplicitHeight;
       if (self.height == "empty")
          return false;
-      let h = self.height.addVar(v, n);
+      let h = self.height.addAbstract(v, n);
       if (!h)
          return false;
       let h0 = h;
@@ -744,11 +770,29 @@ namespace dm {
             throw new Error();
          // construct 3 cases: black parent, red parent and black grand parent, 
          // and empty (no parent). 
-         let bn = new Node(P, "black", Axis.Wild, self.child, new Leaf(self.height, "unknown", false));
+         let bn = new Node(
+            P,
+            "black",
+            Axis.Wild,
+            self.child,
+            new Leaf(self.height, "unknown", false)
+         );
          let black = new RootParent(bn, self.height.add(1), false);
 
-         let rrn = new Node(P, "red", Axis.Wild, self.child, new Leaf(self.height, "black", false));
-         let rbn = new Node(G, "black", Axis.Wild, rrn, new Leaf(self.height, "unknown", false));
+         let rrn = new Node(
+            P,
+            "red",
+            Axis.Wild,
+            self.child,
+            new Leaf(self.height, "black", false)
+         );
+         let rbn = new Node(
+            G,
+            "black",
+            Axis.Wild,
+            rrn,
+            new Leaf(self.height, "unknown", false)
+         );
          let red = new RootParent(rbn, self.height.add(1), false);
          let empty = new RootParent(self.child, "empty", false);
          return {
@@ -771,7 +815,13 @@ namespace dm {
             throw new Error();
          // construct 3 cases: black parent, red parent and black grand parent, 
          // and empty (no parent). 
-         let un = new Node(P, "unknown", Axis.Wild, self.child, new Leaf(self.height, "unknown", true));
+         let un = new Node(
+            P,
+            "unknown",
+            Axis.Wild,
+            self.child,
+            new Leaf(self.height, "unknown", true)
+         );
          let unknown = new RootParent(un, self.height.add(1), true);
          let empty = new RootParent(self.child, "empty", false);
          return {
@@ -803,7 +853,13 @@ namespace dm {
          let rn = new Node(n.name, "red", n.axis, rl, rr);
          if (self.height == "empty")
             throw new Error();
-         let gn = new Node(G, "black", Axis.Wild, rn, new Leaf(self.height.add(-1), "unknown", false));
+         let gn = new Node(
+            G,
+            "black",
+            Axis.Wild,
+            rn,
+            new Leaf(self.height.add(-1), "unknown", false)
+         );
          let red = new RootParent(gn, self.height, false);
          return {
             red: red.addr,
@@ -874,7 +930,10 @@ namespace dm {
             // otherwise, expression could be one already.
             let kv = -self.height.varAdjust + 1;
             (kv >= 1).assert();
-            let newRoot = addr.root.bindHeight(self.height.varName, BaseHeight.concrete(kv));
+            let newRoot = addr.root.bindHeight(
+               self.height.varName,
+               HeightImpl.concrete(kv)
+            );
             // the empty case eliminates the variable from the entire tree
             // because it is bound with a concrete value.
             let empty = addr.resetRoot(newRoot) as LeafAddress;
@@ -897,23 +956,28 @@ namespace dm {
    // node has the most manipulations. 
    export interface Node {
       // compress or not.
-      tryCompress(addr: NodeAddress): false | (() => [LeafAddress | NodeAddress, Node[]]);
+      tryCompress(addr: NodeAddress):
+         false | (() => [LeafAddress | NodeAddress, Node[]]);
       // rotate node up to parent's location in a way that preserves
       // binary tree order.
-      tryRotateUp(addr: NodeAddress): false | (() => NodeAddress);
+      tryRotateUp(addr: NodeAddress):
+         false | (() => NodeAddress);
       // determine how two different node axes are related. 
-      tryCompareAxis(addr: NodeAddress, fromAddr: NodeAddress): false | ((v: string) => {
-         // two cases, one is flipped, the other is not. 
-         readonly unflipped: NodeAddress,
-         readonly flipped: NodeAddress
-      });
+      tryCompareAxis(addr: NodeAddress, fromAddr: NodeAddress):
+         false | ((v: string) => {
+            // two cases, one is flipped, the other is not. 
+            readonly unflipped: NodeAddress,
+            readonly flipped: NodeAddress
+         });
       // flip the axis on this node, adjust axis parameter accordingly.
       doFlipAxis(addr: NodeAddress): NodeAddress;
       // flip node color from red to black or vice versa.
-      tryFlipColor(addr: NodeAddress): false | (() => [NodeAddress, (string | [string,string])]);
+      tryFlipColor(addr: NodeAddress):
+         false | (() => [NodeAddress, (string | [string, string])]);
       tryDelete(addr: NodeAddress): false | (() => Address);
    }
-   Node.prototype.tryCompress = function (addr): false | (() => [(LeafAddress | NodeAddress), Node[]]) {
+   Node.prototype.tryCompress = function (addr):
+      false | (() => [(LeafAddress | NodeAddress), Node[]]) {
       let self = this as Node;
       (addr.image == self).assert();
       // we only need to aadd a check to make sure
@@ -1093,26 +1157,46 @@ namespace dm {
          else return na;
       }
    }
-   Node.prototype.tryFlipColor = function (addr) : false | (() => [NodeAddress, (string | [string,string])]) {
+   Node.prototype.tryFlipColor = function (addr):
+      false | (() => [NodeAddress, (string | [string, string])]) {
       let self = this as Node;
       if (self.color == "unknown")
          return false;
-      if (addr.previous.image instanceof RootParent && addr.previous.image.hasOpen) {
+      if (addr.previous.image instanceof RootParent &&
+         addr.previous.image.hasOpen) {
          // swap color. 
          return () => {
-            let naddr = addr.find(a => a.image instanceof Node && a.image.color == "unknown") as NodeAddress;
+            let naddr = addr.find(
+               a => a.image instanceof Node && a.image.color == "unknown"
+            ) as NodeAddress;
             // give it my color
-            naddr = naddr.replace(new Node(naddr.image.name, self.color, naddr.image.axis, naddr.image.left, naddr.image.right));
+            naddr = naddr.replace(new Node(
+               naddr.image.name,
+               self.color,
+               naddr.image.axis,
+               naddr.image.left,
+               naddr.image.right
+            ));
             addr = naddr.root.addr.child;
             (addr.image.name == self.name).assert();
             self = addr.image;
-            return [addr.replace(new Node(self.name, "unknown", self.axis, self.left, self.right)), [self.name, naddr.image.name]];
+            return [addr.replace(new Node(
+               self.name,
+               "unknown",
+               self.axis,
+               self.left,
+               self.right
+            )), [self.name, naddr.image.name]];
          }
       }
       return () => {
          (addr.image == self).assert();
          return [addr.replace(new Node(
-            self.name, self.color == "red" ? "black" : "red", self.axis, self.left, self.right
+            self.name,
+            self.color == "red" ? "black" : "red",
+            self.axis,
+            self.left,
+            self.right
          )), self.name];
       };
    }
@@ -1144,7 +1228,7 @@ namespace dm {
 // used to find targets for goto (hash to find candidates, unify
 // to see if any actually match).
 namespace dm {
-   export interface BaseHeight {
+   export interface HeightImpl {
       unify(into: Height, txt: {
          readonly hS: Map<string, Height>
       }): false | (() => void);
@@ -1156,7 +1240,7 @@ namespace dm {
    }
    // height unification will bind into height 
    // if var. 
-   BaseHeight.prototype.unify = function (into, txt): false | (() => void) {
+   HeightImpl.prototype.unify = function (into, txt): false | (() => void) {
       let self = this as Height;
       if (into.tag == "concrete") // if not var, must be equal.
          return !self.equals(into) ? false : () => { };
@@ -1253,7 +1337,9 @@ namespace dm {
          right0 = left0 ? self.left.unify(into.right, txt) : false;
          flipped = true;
       }
-      let axis0 = (!left0 || !right0) ? false : self.left.equals(self.right) ? () => {} :  self.axis.unify(into.axis, txt);
+      let axis0 = (!left0 || !right0) ? false :
+         self.left.equals(self.right) ? () => { } :
+            self.axis.unify(into.axis, txt);
       if (!left0 || !right0 || !axis0) {
          left0 ? left0() : {};
          right0 ? right0() : {};
@@ -1309,7 +1395,7 @@ namespace dm {
          let left = self.left.hash;
          let right = self.right.hash;
          if (left.localeCompare(right) > 0)
-            [left,right] = [right,left];
+            [left, right] = [right, left];
          return "N[l:" + left + "][" + right + "]";
       }, enumerable: true, configurable: true,
    })
@@ -1324,11 +1410,11 @@ namespace dm {
 
 namespace dmtest {
    export function test() {
-      let empty = new dm.Leaf(dm.BaseHeight.usingVar("k", 0), "black", false);
+      let empty = new dm.Leaf(dm.HeightImpl.usingVar("k", 0), "black", false);
       { // check rotate.
          let N = new dm.Node("N", "red", dm.Axis.Wild, empty, empty);
          let P = new dm.Node("P", "black", dm.Axis.Wild, N, empty);
-         let R = new dm.RootParent(P, dm.BaseHeight.usingVar("k", 1), false);
+         let R = new dm.RootParent(P, dm.HeightImpl.usingVar("k", 1), false);
          let Paddr = R.addr.child;
          let Naddr = Paddr.left as dm.NodeAddress;
          console.log(Naddr.root.adbg);

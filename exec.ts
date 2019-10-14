@@ -1,3 +1,8 @@
+// this file is dedicated to execution of red-black tree instructions as well
+// as specifying instruction labels.
+
+// upgrading line/instruction types since instructions will be updated
+// to handle execution.
 namespace ebl {
    export interface BaseLine extends bbl.BaseLine {
       readonly self: Line;
@@ -84,31 +89,38 @@ namespace ebl {
    export type Line = Instruction | Header | Footer;
 }
 
+// behavior of top level procedure.  
 namespace ebl {
-   type State = dm.Root;
    type Unify = dm.Unify;
    export interface BaseLine {
+      // does not update abstract state, 
+      // so shouldn't be a target of any state-based goto.
       readonly isPassThroughState?: boolean;
+      // each line is associated with an abstract state. 
       readonly state: State;
+      // tokens for rendering the line. 
       readonly toks: tks.Toks;
    }
 
 
-   // remember and retrieve images and date by hash/unify. 
    class HashUnify {
-      private readonly map = new Map<string, Set<Line>>();
-
+   // abstract state at each line is hashed map
+   private readonly map = new Map<string, Set<Line>>();
       add(value: Line) {
+         // ignore if line does not update abstract state.
          if (value.isPassThroughState)
             return;
          let state = value.state;
+         // if no state is computed, ignore.
          if (!state)
             return;
+         // add to set of lines based on hash.
          let map0 = this.map.getOrSet(state.hash, () => new Set<Line>());
          (!map0.has(value)).assert();
          map0.add(value);
       }
       delete(value: Line): void {
+         // the reverse of previous add method.
          if (value.isPassThroughState)
             return;
          let state = value.state;
@@ -116,6 +128,10 @@ namespace ebl {
             return;
          this.map.get(state.hash).delete(value).assert();
       }
+      // find similar states based on hash, 
+      // a "Unify" resolve differences between
+      // otherwise similar states.
+      // used to find goto targets. 
       lookup(state: State): [Unify, Line][] {
          let ret: [Unify, Line][] = [];
          let map0 = this.map.get(state.hash);
@@ -141,38 +157,50 @@ namespace ebl {
          super();
       }
       get toks(): tks.Toks { return [["endproc", tks.KW]]; }
+      // state is return state of procedure that owns this footer. 
       get state() { return this.owner.returnState; }
    }
-   export interface Return extends Instruction {
-      // readonly isPassThroughState: true;
-   }
 
+   // execution profile
    export type Profile = {
-      root: exe.Node,
       starting: Instruction | Header,
+      // starting state that conforms to starting instruction's abstract state 
+      root: exe.Node,
+      // arguments of procedure (if any). If instruction
+      // selected that isn't start of procedure, may not be
+      // considered in generating root.
       args: [string, number | [exe.Node, boolean]][],
       result?: ExeResult,
    }
+   // result of execution is a context, lines executed in order, 
+   // and either an error or a successful return. 
    export type ExeResult = [exe.Context, Line[], "error" | "return"];
 
 
    export abstract class Proc extends bbl.Proc implements Header {
+      // state hashing/lookup with unification as per HashUnify.
       readonly states = new HashUnify();
+      // goto targets per line. 
       readonly gotos = new Map<Line, [number, Set<Goto>]>();
+      // create ordered goto labels.
       private readonly labels = new Array<Line>();
-
+      // the returns of this procedure.
       private readonly returns = new Set<Return>();
-
+      // adding a line to the procedure. 
       register(line: Line) {
          super.register(line);
          this.states.add(line);
          if (line instanceof Goto) {
+            // gotos are registered based on their targets and labels are allocated if necessary. 
             let info = this.gotos.getOrSet(line.target, (target) => {
                this.labels.push(target);
                return [this.labels.length - 1, new Set<Goto>()];
             });
             info[1].add(line);
          } else if (line instanceof Return) {
+            // returns are tracked separately also, and 
+            // must unify with the return state of the procedure
+            // (or they couldn't be added).
             this.returns.tryAdd(line).assert();
             if (!this.returnState)
                this.returnState = line.state;
@@ -189,6 +217,7 @@ namespace ebl {
 
       }
       unregister(line: Line) {
+         // the exact opposite of register. 
          super.unregister(line);
          this.states.delete(line);
          if (line instanceof Goto) {
@@ -196,6 +225,8 @@ namespace ebl {
             info[1].delete(line).assert();
             if (info[1].isEmpty()) {
                this.labels.splice(info[0], 1);
+               this.gotos.delete(line.target);
+               // don't forget to update other labels after label deletions.
                for (let i = 0; i < this.labels.length; i += 1)
                   this.gotos.get(this.labels[i])[0] = i;
             }
@@ -214,48 +245,61 @@ namespace ebl {
       lookup(state: State) { return this.states.lookup(state); }
 
       readonly footer: ProcFooter;
-      constructor(provider: BlockProvider, readonly name: string, readonly args: string[], readonly state: State) {
+      constructor(
+         provider: BlockProvider, 
+         readonly name: string, 
+         readonly args: string[], 
+         readonly state: State) {
          super(provider);
          this.footer = new ProcFooter(this);
          this.register(this);
       }
       profile: Profile;
       makeArgs: (proc: this, root: exe.Node, r: Random) => [string, number][] = null;
+      // make a new execution profile based on a starting line as directed in the UI.
       makeProfile(line: Line): false | ((r: Random) => Profile) {
-         if (line instanceof Goto || line instanceof Return || line instanceof Footer || line instanceof Switch || !line.state)
+         if (line instanceof Goto || 
+            line instanceof Return || 
+            line instanceof Footer || 
+            line instanceof Switch || 
+            !line.state)
+            // cannot make new profiles from these lines. 
             return false;
+            // make args wasn't set yet.
          if (this.makeArgs == null)
             return false;
          return (r) => {
             let binding = new Map<string, boolean | number | [exe.Node, boolean]>();
+            // abstract state knows how to generate a random instance that matches it.
             let root = line.state.generate(r, binding, 0, 1000);
-            let nodes = binding.filteri(([a, b]) => b instanceof Array).toArray() as [string, [exe.Node, boolean]][];
+            // variable bindings that are randomly generated, these get wrapped up
+            // in the profile's arguments. 
+            let nodes = binding.
+               filteri(([a, b]) => b instanceof Array).toArray() as [string, [exe.Node, boolean]][];
             return {
                starting: line,
                root: root,
-               args: (this.makeArgs(this, root, r) as [string, number | [exe.Node, boolean]][]).concat(nodes),
+               args: (this.makeArgs(this, root, r) as [string, number | [exe.Node, boolean]][]).
+                  concat(nodes),
             };
          };
       }
-
-      //makeProfile: () => Profile;
-
-
-      //readonly profiles: Profile[] = [];
+      // executing a profile.
       exec(profile: Profile): void {
          let executed = new Array<Line>();
          let txt = new exe.Context();
          (txt.version == 0).assert();
          if (profile.root)
             profile.root.clear();
-         else
-            true.assert();
          txt.root.set(0, profile.root);
+         // insert arguments into context 
          for (let [a, b] of profile.args) {
             if (typeof b == "number")
                txt.remember(a, b);
             else txt.remember(a, b[0], b[1]);
          }
+         // increment line number and add
+         // starting instruction to executed.
          txt.increment();
          executed.push(profile.starting);
          // figure out next.
@@ -263,56 +307,67 @@ namespace ebl {
          {
             let at0: Line = profile.starting;
             if (at0 instanceof Switch || at0 instanceof Goto || at0 instanceof Return)
+               // not allowed in a profile. 
                throw new Error();
             while (true) {
                if (at0 == null) {
+                  // no next instruction found.
                   profile.result = [txt, executed, "error"];
                   return;
                }
                at0 = at0.next;
                if (at0 instanceof Instruction) {
+                  // will break this loop when an instruction is found.
                   at = at0;
                   break;
                }
             }
          }
          while (true) {
+            // version of context is always equal to number of instructions executed.
             (executed.length == txt.version).assert();
             executed.push(at);
             let result = at.exec(txt);
             if (result instanceof Case) {
+               // executed instruction was a switch, replace
+               // with resolved case. 
                executed[executed.length - 1] = result;
                if (result.block.instructions.length > 0) {
+                  // setup first instruction of case to be executed.
                   txt.increment();
                   at = result.block.instructions.first();
                   continue;
                } else {
+                  // case has no instructions, error. 
                   profile.result = [txt, executed, "error"];
                   return;
                }
             } else if (result instanceof Instruction) {
+               // goto.
                txt.increment();
                at = result;
                continue;
             } else if (typeof result == "string") {
+               // result is "error" or "return", terminate procedure.
                profile.result = [txt, executed, result];
                return;
             } else {
-               let r = result instanceof exe.Node ? result : null;
-               txt.increment(r);
+               // normal pass though.
+               // if result is a node, that node is the new root of the RB tree.  
+               let newRoot = result instanceof exe.Node ? result : null;
+               txt.increment(newRoot);
                if (at.index == at.parent.instructions.length - 1) {
+                  // if no more instructions, error. 
                   profile.result = [txt, executed, "error"];
                   return;
                }
                at = at.parent.instructions[at.index + 1];
                continue;
             }
-
-
          }
-
       }
       update(): Profile {
+         // make sure profile execution is up to date. 
          let profile = this.profile;
          if (!profile || profile.result)
             return profile;
@@ -321,6 +376,7 @@ namespace ebl {
          return profile;
       }
       invalidate(block: Block) {
+         // if change occurs, invalidate profile's result.
          super.invalidate(block);
          if (this.profile) {
             delete this.profile.result;
@@ -330,20 +386,28 @@ namespace ebl {
 
       get adbg() { return "proc " + this.name; }
       get toks(): tks.Toks {
+         // create a visual representation of the procedure 
+         // as a header block. 
          let ret: tks.Toks = [["proc ", tks.KW]];
          ret.push(...tks.toToks(this.name));
          ret.push(...tks.mkList(this.args));
-         return applyLabel(this, ret);
+         return ret;
       }
       returnState: State;
    }
 }
+
+// details related to execution. 
 namespace exe {
    export type Version = number;
+   // a cell that holds a value during execution, 
+   // versioned so we can retain multiple concrete
+   // instruction states in one structure. 
    class Cell<T> {
       private readonly values = new Array<T>();
       private readonly versions = new Array<Version>();
       private index = 0;
+      // obtain value for cell at version "v"
       private seek(v: Version) {
          if (this.versions.length == 0)
             return undefined;
@@ -372,6 +436,8 @@ namespace exe {
          let i = this.seek(v);
          return i == undefined ? undefined : this.values[i];
       }
+      // push in a new value, will not work if "v" is not
+      // the latest version. 
       set(v: Version, value: T) {
          if (this.values.length > 0) {
             (this.versions.last() < v).assert();
@@ -385,16 +451,22 @@ namespace exe {
    }
    export type Dir = "left" | "right" | "root";
    export type Color = "red" | "black";
-
+   // a BNode is for initializing nodes from main.
    export interface BNode {
       value: number;
       color?: Color;
       left?: BNode | Node;
       right?: BNode | Node;
    }
-
+   // actual concrete RB tree node used during execution. 
    export class Node extends Object {
+      private clearing? : true;
       clear() {
+         // clearing is recursive, so use flag to prevent
+         // infinite recursion.
+         if (this.clearing)
+            return;
+         this.clearing = true;
          for (let child of this.left.allValues().concati(this.right.allValues()))
             if (child != null)
                child.clear();
@@ -403,6 +475,7 @@ namespace exe {
          this.right.clear();
          this.parent.clear();
          this.value.clear();
+         delete this.clearing;
       }
       readonly color = new Cell<Color>();
       readonly left = new Cell<Node>();
@@ -443,7 +516,7 @@ namespace exe {
             child.parent.set(0, this);
          }
       }
-
+      // for debugging.
       toStringV(v: Version): string {
          let clr = this.color.get(v);
          let value = this.value.get(v);
@@ -451,6 +524,7 @@ namespace exe {
          let right = this.right.get(v);
          return value + (clr == "red" ? "R" : "") + "[" + (left ? left.toStringV(v) : "nil") + ", " + (right ? right.toStringV(v) : "nil") + "]";
       }
+      // all values at and under this node.
       values(v: Version, set: Set<number>) {
          set.add(this.value.get(v));
          let left = this.left.get(v);
@@ -460,6 +534,8 @@ namespace exe {
          if (right)
             right.values(v, set);
       }
+      // whether this node is to the left or right of its
+      // parent (if no parent, then root).
       dir(v: Version): Dir {
          let p = this.parent.get(v);
          if (p == undefined)
@@ -470,13 +546,7 @@ namespace exe {
             (p.right.get(v) == this).assert();
             return "right";
          }
-
-
-
       }
-
-
-
       get(v: Version, dir: Dir) {
          (dir != "root").assert();
          return (dir == "left" ? this.left : this.right).get(v);
@@ -557,18 +627,28 @@ namespace exe {
          result[0].set(v, result[1], node);
       }
    }
+   // execution context. 
    export class Context extends Object {
+      // variable map. 
       readonly map = new Map<string, Cell<number | Node>>();
+      // latest version of htis context.
       version: Version = 0;
+      // root as a cell. 
       readonly root = new Cell<Node>();
+      // those nodes whose children are flipped compared to the 
+      // abstract state true at some version. 
       private readonly flipped = new Map<string, Cell<boolean>>();
       constructor() {
          super();
       }
+      // get variable as a node. 
       private get(N: string) {
          return (this.map.get(N).get(this.version) as Node);
       }
-      reverse(version: Version, rmap: Map<exe.Node, [string, boolean]>) {
+      // populates rmap based on whether a labelled node has its
+      // children flipped or not. Useful for when displaying concrete
+      // execution data with overlayed abstract details.
+      computeNodeVarLabels(version: Version, rmap: Map<exe.Node, [string, boolean]>) {
          for (let [a, b] of this.map) {
             let node = b.get(version);
             if (node instanceof Node) {
@@ -578,6 +658,7 @@ namespace exe {
             }
          }
       }
+      // increment version, set new root if specified. 
       increment(r?: (Node | void)) {
          let r0 = r instanceof Node ? r : this.root.get(this.version);
          if (r0)
@@ -591,6 +672,7 @@ namespace exe {
             this.root.set(this.version, r0);
          this.version += 1;
       }
+      // forget specfied node variable bindings at latest version. 
       forget(Ns: string[]) {
          for (let N of Ns) {
             let node = this.get(N);
@@ -599,6 +681,7 @@ namespace exe {
             this.setFlipped(N, false);
          }
       }
+      // remeber a node or number variable binding. 
       remember(N: string, value: Node | number, flipped?: boolean) {
          let cell = this.map.getOrSet(N, () => new Cell<any>());
          (cell.get(this.version) == undefined).assert();
@@ -606,9 +689,14 @@ namespace exe {
          if (value instanceof Node)
             this.setFlipped(N, flipped ? true : false);
       }
+      // flip node colors. 
       flipColors(Ns: (string | [string, string])[]) {
-         for (let N of Ns) {
+         let skip = new Set<number>();
+         for (let i = 0; i < Ns.length; i += 1) {
+            let N = Ns[i];
             if (typeof N == "string") {
+               if (skip.has(i))
+                  continue;
                let node = this.get(N);
                let clr = node.color.get(this.version);
                clr = clr == "red" ? "black" : "red";
@@ -619,35 +707,46 @@ namespace exe {
                let fromn = this.get(from);
                let toc = ton.color.get(this.version);
                let fromc = fromn.color.get(this.version);
-               if (toc != fromc) {
-                  ton.color.set(this.version, fromc);
-                  fromn.color.set(this.version, toc);
+               let idx = Ns.findIndex((N, j) => j > i && N == from);
+               let [toe, frome] = [fromc, toc];
+               if (idx > i) {
+                  frome = frome == "red" ? "black" : "red";
+                  skip.add(idx);
                }
+               ton.color.set(this.version, toe);
+               fromn.color.set(this.version, frome);
             }
          }
       }
+      // flip node axis flip states. 
       flipAxes(Ns: string[]) {
          for (let N of Ns) {
             let node = this.get(N);
             this.setFlipped(N, !this.isFlipped(N));
          }
       }
+      // delete a node from the tree. 
       delete(N: string) {
          let node = this.get(N);
          let r = node.delete(this.version);
          this.forget([N]);
          return r;
       }
+      // is node flipped with respect to 
+      // the abstract state image. 
       private isFlipped(N: string) {
          let f0 = this.flipped.get(N);
          return f0 ? (f0.get(this.version) ? true : false) : false;
       }
+      // set flip state. 
       private setFlipped(N: string, value: boolean) {
          if (!value && !this.flipped.has(N))
             return;
          this.flipped.getOrSet(N, () => new Cell<boolean>()).set(this.version, value);
       }
-
+      // rotate node N to its parent P position, P
+      // will become a child of N, binary ordering
+      // is preserved. 
       rotateUp(N: string, P: string) {
          let n = this.get(N);
          let p = this.get(P);
@@ -656,6 +755,8 @@ namespace exe {
          // copy to N.
          this.setFlipped(N, this.isFlipped(P));
       }
+      // compare whether the flipped state of two axes (P and N)
+      // are equal or not. 
       compareAxis(P: string, N: string): boolean {
          let pA = this.isFlipped(P);
          let nA = this.isFlipped(N);
@@ -664,6 +765,8 @@ namespace exe {
          this.setFlipped(N, pA);
          return false;
       }
+      // concrete executions for a bunch of swtich statements defined below
+      // (all start with "expand")
       expandLeafUnknown(N: string, dir: Dir, C: string): Color {
          let n = this.get(N);
          (dir != "root").assert();
@@ -727,6 +830,7 @@ namespace exe {
          this.remember(G, g, pdir == "right");
          return "red";
       }
+      // binary inserstion of a node. 
       insertBin(N: string, value: number): void | Node {
          let n = new Node();
          n.color.set(this.version, "red");
@@ -737,6 +841,8 @@ namespace exe {
             return n;
          else r.insertBin(this.version, n)
       }
+      // copy a value to be deleted to a leaf without
+      // changing binary tree order. 
       swapToLeaf(N: string) {
          let n = this.get(N);
          let to = n.swapToLeaf(this.version);
@@ -748,14 +854,21 @@ namespace exe {
             this.setFlipped(N, left != null);
          }
       }
+      // execute a unification used to make similar abstract
+      // states exact matches. 
       unify(unify: dm.Unify) {
          // flip colors first.
          this.flipColors(unify.flipColors);
-         this.flipAxes(unify.flipAxes);
-         let nS = unify.nS.mapi(([into, from]) => {
+         let flipAxes = new Set(unify.flipAxes);
+         let nS = unify.nS.filteri(([into,from]) => into != from).mapi(([into, from]) => {
             let fromN = this.get(from);
             (fromN != null).assert();
-            return [into, fromN, this.isFlipped(from)] as [string, exe.Node, boolean];
+            let flipped = this.isFlipped(from);
+            if (flipAxes.has(from)) {
+               flipped = !flipped;
+               flipAxes.delete(from);
+            }
+            return [into, fromN, flipped] as [string, exe.Node, boolean];
          }).toArray();
 
          let seen = new Set<string>();
@@ -765,14 +878,14 @@ namespace exe {
             intoMap.set(this.version, from);
             this.setFlipped(into, flipped);
          }
-         let toForget = unify.nS.mapi(([a, b]) => b).filteri(b => !seen.has(b)).toArray();
+         this.flipAxes(flipAxes.toArray());
+         let toForget = unify.nS.filteri(([a,b]) => a != b && !seen.has(b)).mapi(([a,b]) => b).toArray();
          this.forget(toForget);
       }
    }
 }
 
-
-
+// tokens used to display instructions in the UI. 
 namespace tks {
    export type TokKind = "ID" | "KW" | "SN" | "NM" | "LB";
    export const ID: TokKind = "ID";
@@ -843,34 +956,28 @@ namespace tks {
    }
 }
 
-
-
+// basic instruction implementation for execution and semantics. 
 namespace ebl {
    export type EContext = exe.Context;
    export type ENode = exe.Node;
    export type State = dm.Root;
 
-   export function applyLabel(line: Header | Instruction, toks: tks.Toks) {
-      return toks;
-      /*
-   */
-   }
    export abstract class Instruction extends bbl.Instruction {
-      get toks(): tks.Toks { return applyLabel(this, this.toks0); }
+      get toks(): tks.Toks { return this.toks0; }
       protected abstract get toks0(): tks.Toks;
       abstract exec(txt: EContext): void | ENode | Instruction | Case | "error" | "return";
       readonly index: number;
       readonly parent: Block;
       constructor(parent: Line | Block) {
          super();
-         let parent0 = parent instanceof Block ? parent : parent.tag == "header" ? parent.block : parent.parent;
+         let parent0 = 
+            parent instanceof Block ? parent : 
+            parent.tag == "header" ? parent.block : 
+            parent.parent;
          this.parent = parent0;
          this.index = parent0.instructions.length;
       }
    }
-
-
-
    export abstract class Basic extends Instruction {
       isSwitch(): false { return false; }
       constructor(parent: Line | Block, public state: State) {
@@ -879,7 +986,9 @@ namespace ebl {
       abstract exec(txt: EContext): void | ENode;
    }
 }
+// specific non-branching instruction implementations.
 namespace ebl {
+   // a compression simply forgets variable bindings. 
    export class Compress extends Basic {
       get adbg() { return "compress(" + this.Ns.format() + ")"; }
       constructor(parent: Block | Line, state: State, readonly Ns: string[]) {
@@ -890,6 +999,7 @@ namespace ebl {
          return tks.toToks("compress").concat(tks.mkList(this.Ns));
       }
    }
+   // a red black tree node rotation. 
    export class RotateUp extends Basic {
       get adbg() { return "rotateUp(" + this.N + ")"; }
       constructor(parent: Block | Line, state: State, readonly N: string, readonly P: string) {
@@ -902,6 +1012,7 @@ namespace ebl {
    }
    export abstract class Flip<T> extends Basic {
       abstract get Ns(): T[];
+      // used in UI to add a thing to flip with an automatic undo closure. 
       recycle(newValue: T, newState: State): () => void {
          this.proc.unregister(this);
          this.Ns.push(newValue);
@@ -928,8 +1039,13 @@ namespace ebl {
       }
    }
    export class FlipColor extends Flip<string | [string, string]> {
-      get adbg() { return "flipColors(" + this.Ns.format(a => a instanceof Array ? a[0] : a) + ")"; }
-      constructor(parent: Block | Line, state: State, readonly Ns: (string | [string, string])[]) {
+      get adbg() { 
+         return "flipColors(" + this.Ns.format(a => a instanceof Array ? a[0] : a) + ")"; 
+      }
+      constructor(
+         parent: Block | Line, 
+         state: State, 
+         readonly Ns: (string | [string, string])[]) {
          super(parent, state);
       }
       exec(txt: EContext) { return txt.flipColors(this.Ns); }
@@ -941,6 +1057,7 @@ namespace ebl {
          })));
       }
    }
+   // a delete instruction, just calls delete in context. 
    export class Delete extends Basic {
       get adbg() { return "delete(" + this.N + ")"; }
       constructor(parent: Block | Line, state: State, readonly N: string) {
@@ -951,13 +1068,19 @@ namespace ebl {
          return tks.toToks("delete").concat(tks.mkList([this.N]));
       }
    }
+   // add height var has no execution semantics. 
    export class AddHeightVar extends Basic {
       get adbg() {
          return "addHeightVar(" + this.k + ", " + this.value + ", " +
             this.args.format(([a, b]) => a + "." + b) + ")";
       }
       exec(txt: EContext) { return; }
-      constructor(parent: Block | Line, state: State, readonly k: string, readonly value: number, readonly args: [string, "left" | "right" | "parent"][]) {
+      constructor(
+         parent: Block | Line, 
+         state: State, 
+         readonly k: string, 
+         readonly value: number, 
+         readonly args: [string, "left" | "right" | "parent"][]) {
          super(parent, state);
       }
       protected get toks0() {
@@ -971,19 +1094,27 @@ namespace ebl {
          return tks.toToks("addHeightVar").concat(tks.mkList(args));
       }
    }
+   // binary tree insert. 
    export class InsertBin extends Basic {
       get adbg() {
          return this.N + " = insertBin(" + this.V + ")";
       }
-      constructor(parent: Block | Line, state: State, readonly N: string, readonly V: string) {
+      constructor(
+         parent: Block | Line, 
+         state: State, 
+         readonly N: string, 
+         readonly V: string) {
          super(parent, state);
       }
-      exec(txt: EContext) { return txt.insertBin(this.N, txt.map.get(this.V).get(txt.version) as number); }
+      exec(txt: EContext) { 
+         return txt.insertBin(this.N, txt.map.get(this.V).get(txt.version) as number); 
+      }
       protected get toks0() {
          let rhs = tks.toToks("insertBin").concat(tks.mkList([this.V]));
          return tks.assign(this.N, rhs);
       }
    }
+   // used for deletion. 
    export class SwapToLeaf extends Basic {
       get adbg() {
          return this.N + " = swapToLeaf(" + this.N + ")";
@@ -997,7 +1128,10 @@ namespace ebl {
       }
    }
 }
+// generic switch instruction implementation.
 namespace ebl {
+   // nothing fancy for case or switch footer, just
+   // filling in some details (case index, how they render in the UI)
    export abstract class Case extends bbl.Case {
       readonly index: number;
       constructor(readonly owner: Switch, readonly state: State) {
@@ -1008,7 +1142,7 @@ namespace ebl {
       protected abstract get onToks(): tks.Toks;
       get toks(): tks.Toks {
          let ret: tks.Toks = [["case ", tks.KW]];
-         return applyLabel(this, ret.concat(this.onToks));
+         return ret.concat(this.onToks);
       }
    }
 
@@ -1020,6 +1154,7 @@ namespace ebl {
       get adbg() { return "endswitch"; }
       get state() { return this.owner.breakState; }
    }
+   // a generic switch. 
    export abstract class Switch extends Instruction {
       breakState: State;
       readonly cases = new Array<Case>();
@@ -1042,6 +1177,7 @@ namespace ebl {
    }
 }
 
+// specific switch and branch instruction implementations. 
 namespace ebl {
    abstract class CaseT<Owner extends Switch> extends Case {
       constructor(owner: Owner, state: State) {
@@ -1058,9 +1194,6 @@ namespace ebl {
          return "error";
       else return line.block.instructions[0];
    }
-
-
-
    export class AxisTrueCase extends CaseT<CompareAxis> {
       get adbg() { return "true"; }
       protected get onToks() { return tks.toToks(true); }
@@ -1277,7 +1410,7 @@ namespace ebl {
          }
          if (unify.flipColors.length > 0)
             unifyArgs.push(tks.toToks("color").concat(tks.mkList(unify.flipColors)));
-            if (unify.flipAxes.length > 0)
+         if (unify.flipAxes.length > 0)
             unifyArgs.push(tks.toToks("axis").concat(tks.mkList(unify.flipAxes)));
          let ret: tks.Toks = [kw, lbl];
          if (unifyArgs.length > 0)
@@ -1303,12 +1436,14 @@ namespace ebl {
 
 
 }
-
+// random generation of red black trees based on abstract state descriptions.
 namespace dm {
    export interface Image {
       generate(r: Random, binding: Map<string, number | boolean | [exe.Node, boolean]>, min: number, max: number, parent?: RootParent): exe.Node;
    }
-   function makeTree(k: number, min: number, max: number, isBlack: boolean, r: Random, blackChance = 2): exe.Node {
+   function makeTree(
+      k: number, min: number, max: number, 
+      isBlack: boolean, r: Random, blackChance = 2): exe.Node {
       let clr: exe.Color = isBlack || (r.nextN(blackChance) == 0) ? "black" : "red";
       if (clr == "black" && k == 1)
          return null;
@@ -1387,7 +1522,7 @@ namespace dm {
       let nextHeight = color == "red" ? height : height - 1;
       (nextHeight >= 1).assert();
       let value = Math.round(min.lerp(max, .5));
-      let nextLeaf = new dm.Leaf(dm.BaseHeight.concrete(nextHeight), color == "red" ? "black" : "unknown", false);
+      let nextLeaf = new dm.Leaf(dm.HeightImpl.concrete(nextHeight), color == "red" ? "black" : "unknown", false);
       let left = nextLeaf.generate(r, binding, min, value);
       let right = nextLeaf.generate(r, binding, value, max);
       return exe.Node.make({
@@ -1452,7 +1587,7 @@ namespace dm {
       if (h == 0)
          return null;
       else h = Math.ceil(h / 3);
-      let leaf = new dm.Leaf(dm.BaseHeight.concrete(h), "black", false);
+      let leaf = new dm.Leaf(dm.HeightImpl.concrete(h), "black", false);
       return leaf.generate(r, binding, min, max);
    }
 }

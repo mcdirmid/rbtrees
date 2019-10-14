@@ -1,3 +1,7 @@
+// customized visualization of blocks/instructions based off of
+// vblocks and exec.
+
+// upgraded types as done before, merging ebl with vbl interfaces.  
 namespace ebl {
    export interface Instruction extends vbl.Instruction { }
    export interface Block extends vbl.Block { }
@@ -10,7 +14,7 @@ namespace ebl {
       readonly selected: Line;
    }
 }
-
+// make block and proc concrete, connect them together via a provider. 
 namespace ebl {
    export class Block extends vbl.Block { }
    class RBlockProvider extends Object implements BlockProvider, vbl.BlockProvider {
@@ -21,13 +25,17 @@ namespace ebl {
          super(new RBlockProvider(), name, args, state);
       }
    }
+}
+// define host for instructions with lines and blocks
+namespace ebl {
    type TokKind = tks.TokKind;
    export abstract class Host extends vbl.Host {
       abstract get proc(): Proc;
       get useFont() { return rn.codeFont; }
+      // a hard coded highlighting scheme. 
       private readonly highlight0 = new Map<TokKind, {
-         font?: Font,
-         fill?: RGB
+         readonly font?: Font,
+         readonly fill?: RGB
       }>([
          [tks.KW, { fill: RGB.dodgerblue }],
          [tks.ID, {}],
@@ -35,13 +43,8 @@ namespace ebl {
          [tks.LB, { fill: RGB.grey, font: rn.italicCodeFont }],
          [tks.SN, { fill: RGB.grey, font: rn.boldCodeFont }]
       ]);
-      highlightFor(tok: [string, TokKind]): ({
-         readonly font?: Font,
-         readonly fill?: RGB,
-      }) {
-         let ret = this.highlight0.get(tok[1]);
-
-         return ret;
+      highlightFor(tok: [string, TokKind]) {
+         return this.highlight0.get(tok[1]);
       }
       // generates an undo for an instruction add. 
       completeAdd(ins: Instruction): rn.Undo {
@@ -61,6 +64,8 @@ namespace ebl {
       // TODO: add "break".
       renderHeader(txt: Context) {
          let sz = super.renderHeader(txt);
+         // basic button bar for deleting instruction, adding a return, or
+         // creating/populating an exec profile.  
          let sz1 = txt.buttonBar((0).vec(sz.y), [
             ["delete", () => this.canDelete()],
             ["return", () => {
@@ -93,7 +98,7 @@ namespace ebl {
                return () => {
                   let oldProfile = this.proc.profile;
                   this.proc.profile = f(this.random);
-                  return () => { 
+                  return () => {
                      this.proc.profile = oldProfile;
                   } // no undo.
                }
@@ -101,6 +106,8 @@ namespace ebl {
          ]);
          return sz.x.max(sz1.x).vec(sz.y + sz1.y + txt.g.fontHeight() / 2);
       }
+      // clean up newly added goto statements by auto selecting
+      // next statement. 
       protected cleanupPress() {
          super.cleanupPress();
          if (this.selected instanceof Goto && this.selected.newAdd) {
@@ -109,10 +116,14 @@ namespace ebl {
          }
       }
    }
+}
 
-
+// connect up custom line rendering logic. 
+namespace ebl {
    function renderBaseLine(rect: Rect2D, txt: Context): void {
       let line = this as Line;
+      // lines are rendered via the tokens specified in
+      // exec.ts.  
       let toks = line.toks;
       let x = 0;
       for (let [s, tk] of toks) {
@@ -120,6 +131,7 @@ namespace ebl {
          txt.g.fillText(s, rect.min.addX(x), hl);
          x += txt.g.textWidth(s, hl.font);
       }
+      // if target of goto, add label. 
       let proc = line.proc as Proc;
       if (proc.gotos.has(line)) {
          let [n, gotos] = proc.gotos.get(line);
@@ -133,10 +145,8 @@ namespace ebl {
          txt.g.fillText(s, rect.min.addX(x), hl);
          x += txt.g.textWidth(s, hl.font);
       }
-
-
-
-
+      // if a goto can be added after the selected instruction,
+      // then render a box as an affordance if it can goto this line. 
       if (!(line instanceof Footer) && !(line as Instruction).isPassThroughState) {
          let doGoto = false;
          if (txt.host.selected == line && txt.host.canEdit()) {
@@ -148,45 +158,54 @@ namespace ebl {
             });
             doGoto = rS.length > 0;
          }
-         let doTarget = !doGoto && txt.host.selected instanceof Goto && txt.host.selected.target == line;
-
+         let doTarget = // is line already the target of a selected goto?
+            !doGoto &&
+            txt.host.selected instanceof Goto &&
+            txt.host.selected.target == line;
          let p0 = (rect.max.x - txt.SW * 3).vec(rect.min.y + 2);
          let p1 = (p0.x + txt.SW).vec(rect.max.y - 2);
          let rect0 = p0.rect(p1);
-         txt.fillRect(rect0, doGoto ? RGB.dodgerblue.alpha(.5) : doTarget ? RGB.forestgreen.alpha(.5) : null, {
-            label: "goto",
-            addr: line,
-            acts: [
-               ["target", () => {
-                  if (!doGoto)
-                     return false;
-                  return (m) => {
-                     if (m instanceof bbl.BaseLine && !(m as Instruction).isPassThroughState) {
-                        let other = m as (Instruction | Header);
-                        if (line.state.checkUnify(other.state))
-                           return () => {
-                              let goto = new Goto(line, other);
-                              if (other.isAfter(line))
-                                 goto.isInvisible = true;
-                              let undo = txt.host.completeAdd(goto);
-                              let ret: [rn.Undo, rn.Address] = [undo, null];
-                              return ret;
-                           }
+         // fill rect includes targetting functionality for goto drag connection. 
+         txt.fillRect(
+            rect0,
+            doGoto ? RGB.dodgerblue.alpha(.5) :
+               doTarget ? RGB.forestgreen.alpha(.5) : null,
+            {
+               label: "goto",
+               addr: line,
+               acts: [
+                  ["target", () => {
+                     if (!doGoto)
+                        return false;
+                     return (m) => {
+                        if (m instanceof bbl.BaseLine &&
+                           !(m as Instruction).isPassThroughState) {
+                           let other = m as (Instruction | Header);
+                           if (line.state.checkUnify(other.state))
+                              return () => {
+                                 let goto = new Goto(line, other);
+                                 if (other.isAfter(line))
+                                    goto.isInvisible = true;
+                                 let undo = txt.host.completeAdd(goto);
+                                 let ret: [rn.Undo, rn.Address] = [undo, null];
+                                 return ret;
+                              }
+                        }
+                        return false;
                      }
-                     return false;
-                  }
-               }]
-            ]
-         });
+                  }]
+               ]
+            });
       }
    }
-
-
+   // monkey patches. 
    Footer.prototype.renderCoreLine = renderBaseLine;
    Proc.prototype.renderCoreLine = renderBaseLine;
    Case.prototype.renderCoreLine = renderBaseLine;
    Instruction.prototype.renderCoreLine = renderBaseLine;
 }
+
+// tie up domain visualization into code visualization.
 namespace ebl {
    // defines VisHost, a variant of dm.Host
    // that implements all manipulation methods
@@ -210,14 +229,9 @@ namespace ebl {
             return false;
          return super.checkEdit();
       }
-      /*
-      private get block() { 
-         let at = this.code.selected;
-         if (at.tag == "header")
-            return at.block;
-         else return at.parent;
-      }
-      */
+      // all actions that can be triggered in UI. Connect
+      // a domain-state changer on a node address into the new
+      // instruction that represents it in the code view. 
       tryFlipColor(addr: dm.NodeAddress): false | rn.Do {
          let result = addr.image.tryFlipColor(addr);
          if (!result)
@@ -225,14 +239,18 @@ namespace ebl {
          let f = result;
          return () => {
             let [addr0, on] = f();
+            // if a flip color already selected, just add to that. 
             if (this.code.selected instanceof FlipColor)
                return [this.code.selected.recycle(on, addr0.root), addr0];
             else {
-               let undo = this.code.completeAdd(new FlipColor(this.code.selected, addr0.root, [on]));
+               let undo = this.code.completeAdd(
+                  new FlipColor(this.code.selected, addr0.root, [on])
+               );
                return [undo, addr0];
             }
          }
       }
+      // similar to tryFlipColor.
       tryFlipAxis(addr: dm.NodeAddress): false | rn.Do {
          return () => {
             let result = addr.image.doFlipAxis(addr);
@@ -240,7 +258,9 @@ namespace ebl {
             if (this.code.selected instanceof FlipAxis)
                return [this.code.selected.recycle(addr.image.name, addr0.root), addr0];
             else {
-               let undo = this.code.completeAdd(new FlipAxis(this.code.selected, addr0.root, [addr.image.name]));
+               let undo = this.code.completeAdd(
+                  new FlipAxis(this.code.selected, addr0.root, [addr.image.name])
+               );
                return [undo, addr0];
             }
          }
@@ -252,7 +272,14 @@ namespace ebl {
          let f = result;
          return () => {
             let addr0 = f();
-            let undo = this.code.completeAdd(new RotateUp(this.code.selected, addr0.root, addr.image.name, (addr.previous.image as dm.Node).name));
+            let undo = this.code.completeAdd(
+               new RotateUp(
+                  this.code.selected,
+                  addr0.root,
+                  addr.image.name,
+                  (addr.previous.image as dm.Node).name
+               )
+            );
             return [undo, addr0];
          }
       }
@@ -263,7 +290,9 @@ namespace ebl {
          let f = result;
          return () => {
             let addr0 = f();
-            let undo = this.code.completeAdd(new Delete(this.code.selected, addr0.root, addr.image.name));
+            let undo = this.code.completeAdd(
+               new Delete(this.code.selected, addr0.root, addr.image.name)
+            );
             return [undo, addr0];
          }
       }
@@ -280,7 +309,10 @@ namespace ebl {
          return () => {
             let [addr0, Ns] = f();
             if (this.code.selected instanceof Compress) {
+               // add compressed variable(s) to existing compress call. 
+               // like recycling for tryFlip*. 
                let exist = this.code.selected;
+               // remove and then re-add effects after adding additional arguments
                this.code.proc.unregister(exist);
                exist.Ns.push(...Ns.map(n => n.name));
                let oldState = exist.state;
@@ -295,15 +327,17 @@ namespace ebl {
                }
                return [undo, addr0];
             } else {
-               let undo = this.code.completeAdd(new Compress(this.code.selected, addr0.root, Ns.map(n => n.name)));
+               let undo = this.code.completeAdd(
+                  new Compress(this.code.selected, addr0.root, Ns.map(n => n.name))
+               );
                return [undo, addr0];
             }
-
-            throw new Error();
          }
-
-
       }
+      // add a new height var to the abstract state
+      // if existing add height var is selected, then use previously created
+      // height var with concrete value it was given to determine new height var
+      // expression. (e.g. if k = 1, then 2 becomes k + 1)
       tryHeightVar(addr: dm.LeafAddress | dm.RootParentAddress): false | rn.Do {
          if (addr.image.height == "empty")
             return false;
@@ -311,6 +345,7 @@ namespace ebl {
             return false;
          return () => {
             let on: [string, "left" | "right" | "parent"];
+            // heights are relative to nodes, so either node's parent or a node's child.
             if (addr.image instanceof dm.Leaf) {
                let nA = addr.previous.image.name;
                (addr.at.name == "left" || addr.at.name == "right").assert();
@@ -321,6 +356,7 @@ namespace ebl {
                on = [nA, "parent"];
             }
             if (this.code.selected instanceof AddHeightVar) {
+               // add to existing height var. 
                let exist = this.code.selected;
                let v = exist.k;
                let n = exist.value;
@@ -340,13 +376,16 @@ namespace ebl {
                   this.code.proc.register(exist);
                }, addr0];
             } else {
+               // create new height var. 
                let n = (addr.image.height as dm.HeightConcrete).concrete;
                let v = addr.root.freshHeightName("k");
                let ff = addr.image.addHeightVar(addr, v, n);
                if (!ff)
                   throw new Error();
                let addr0 = ff();
-               let undo = this.code.completeAdd(new AddHeightVar(this.code.selected, addr0.root, v, n, [on]));
+               let undo = this.code.completeAdd(
+                  new AddHeightVar(this.code.selected, addr0.root, v, n, [on])
+               );
                return [undo, addr0];
             }
          }
@@ -366,9 +405,19 @@ namespace ebl {
             let f = f0;
             return () => {
                let at = this.code.selected;
-               let axisV = fromAddr.image.axis.isVar() ? fromAddr.image.axis.varName : fromAddr.root.freshAxisName("𝛼");
+               let axisV =
+                  fromAddr.image.axis.isVar() ? fromAddr.image.axis.varName :
+                     fromAddr.root.freshAxisName("𝛼");
                let ret = f(axisV);
-               let newIns = new CompareAxis(this.code.selected, fromAddr.image.name, intoAddr.image.name, axisV, ret.unflipped.root, ret.flipped.root);
+               let newIns =
+                  new CompareAxis(
+                     this.code.selected,
+                     fromAddr.image.name,
+                     intoAddr.image.name,
+                     axisV,
+                     ret.unflipped.root,
+                     ret.flipped.root
+                  );
                let addr0 = ret.unflipped;
                return [this.code.completeAdd(newIns), addr0];
             }
@@ -387,16 +436,34 @@ namespace ebl {
                on: addr.previous.image.name, by: addr.at.name as ("left" | "right"),
             }
             // expanded node will be an uncle. 
-            let [U] = addr.root.freshNodeName([addr.previous.image.name == "G" ? "U" : "S"]);
+            let [U] =
+               addr.root.freshNodeName([addr.previous.image.name == "G" ? "U" : "S"]);
             let result = f(U);
             let newIns: Switch;
             let addr0: dm.NodeAddress | dm.LeafAddress;
-            // two kinds of results are possible depending on if leaf is black or leaf is unknown.
+            // two kinds of results are possible depending on if leaf is black or leaf is 
+            // unknown.
             if (result.tag == "black") {
-               newIns = new ExpandLeafBlack(this.code.selected, on.on, on.by, U, result.node.root, result.empty ? result.empty.root : null);
+               newIns =
+                  new ExpandLeafBlack(
+                     this.code.selected,
+                     on.on,
+                     on.by,
+                     U,
+                     result.node.root,
+                     result.empty ? result.empty.root : null
+                  );
                addr0 = result.node;
             } else {
-               newIns = new ExpandLeafUnknown(this.code.selected, on.on, on.by, U, result.black.root, result.red.root);
+               newIns =
+                  new ExpandLeafUnknown(
+                     this.code.selected,
+                     on.on,
+                     on.by,
+                     U,
+                     result.black.root,
+                     result.red.root
+                  );
                addr0 = result.black;
             }
             return [this.code.completeAdd(newIns), addr0];
@@ -412,7 +479,16 @@ namespace ebl {
             // introduce parent and grandparent nodes to cover the last two cases. 
             let [P, G] = addr.root.freshNodeName(["P", "G"]);
             let result = f(P, G);
-            let newIns = new ExpandFullRoot(this.code.selected, addr.child.image.name, P, G, result.black.root, result.red.root, result.empty.root);
+            let newIns =
+               new ExpandFullRoot(
+                  this.code.selected,
+                  addr.child.image.name,
+                  P,
+                  G,
+                  result.black.root,
+                  result.red.root,
+                  result.empty.root
+               );
             let addr0 = result.black;
             return [this.code.completeAdd(newIns), addr0];
          }
@@ -427,7 +503,14 @@ namespace ebl {
             // introduce parent and grandparent nodes to cover the last two cases. 
             let [P] = addr.root.freshNodeName(["P"]);
             let result = f(P);
-            let newIns = new ExpandHalfRoot(this.code.selected, addr.child.image.name, P, result.notEmpty.root, result.empty.root);
+            let newIns =
+               new ExpandHalfRoot(
+                  this.code.selected,
+                  addr.child.image.name,
+                  P,
+                  result.notEmpty.root,
+                  result.empty.root
+               );
             let addr0 = result.notEmpty;
             return [this.code.completeAdd(newIns), addr0];
          }
@@ -442,12 +525,23 @@ namespace ebl {
             // introduce parent and grandparent nodes to cover the last two cases. 
             let [G] = addr.root.freshNodeName(["G"]);
             let result = f(G);
-            if (at instanceof Case && at.index == 0 && at.owner instanceof ExpandHalfRoot) {
+            if (at instanceof Case &&
+               at.index == 0 &&
+               at.owner instanceof ExpandHalfRoot) {
                let del = at.owner.canDelete();
                let empty = at.owner.cases[1].state;
                if (del && addr.child.left.image instanceof dm.Node) {
                   let undoA = del[1]();
-                  let newIns = new ExpandFullRoot(at.owner.parent, addr.child.left.image.name, addr.child.image.name, G, result.black.root, result.red.root, empty)
+                  let newIns =
+                     new ExpandFullRoot(
+                        at.owner.parent,
+                        addr.child.left.image.name,
+                        addr.child.image.name,
+                        G,
+                        result.black.root,
+                        result.red.root,
+                        empty
+                     );
                   let undoB = this.code.completeAdd(newIns);
                   let addr0 = result.black;
                   return [() => {
@@ -456,7 +550,14 @@ namespace ebl {
                   }, addr0];
                }
             }
-            let newIns = new ExpandHalf2Root(this.code.selected, addr.child.image.name, G, result.black.root, result.red.root);
+            let newIns =
+               new ExpandHalf2Root(
+                  this.code.selected,
+                  addr.child.image.name,
+                  G,
+                  result.black.root,
+                  result.red.root
+               );
             let addr0 = result.black;
             return [this.code.completeAdd(newIns), addr0];
          }
@@ -464,37 +565,36 @@ namespace ebl {
    }
 }
 namespace exe {
-
-
    export interface Node {
       render(pos: Vector2D, txt: rnexe.Context): [Vector2D, number];
    }
 }
+// visualization of a concrete execution. 
 namespace rnexe {
    export interface Context extends rn.Context {
       readonly host: Host;
-
    }
-
+   // version addresses are just simple equality wrappers. 
    class VersionAddr extends Object implements rn.Address {
-      constructor(readonly value : exe.Version) {
+      constructor(readonly value: exe.Version) {
          super();
       }
       get adbg() { return this.value.toString(); }
-      equals(other : rn.Address): boolean { return other instanceof VersionAddr && other.value == this.value; }
-      isNestedIn(other : rn.Address): boolean { return this.equals(other); }
+      equals(other: rn.Address): boolean {
+         return other instanceof VersionAddr && other.value == this.value;
+      }
+      isNestedIn(other: rn.Address): boolean { return this.equals(other); }
    }
-
-
+   // rendering host of a concrete execution visualization. 
    export abstract class Host extends rn.Host {
       get useFont() { return rn.codeFont; }
       abstract get proc(): ebl.Proc;
       get profile() { return this.proc.profile; }
-      version: exe.Version = 0;
-      updateVersion(to : exe.Version, line : ebl.Line) {
-         this.version = to;
+      selectedVersion: exe.Version = 0;
+      updateSelected(to: exe.Version, line: ebl.Line) {
+         this.selectedVersion = to;
       }
-      readonly reverse = new Map<exe.Node,[string,boolean]>();
+      readonly nodeVarLabels = new Map<exe.Node, [string, boolean]>();
 
       renderChild(pos: Vector2D, txt: Context): Vector2D {
          if (this.profile == undefined)
@@ -503,19 +603,21 @@ namespace rnexe {
          let [etxt, instructions, code] = profile.result;
          {
             let y = pos.y + rn.smallCircleRad * 2;
+            // create a little circle for each instruction executed
+            // so we can scrub to them via a selection mechanism. 
             for (let i = 0; i < instructions.length; i += 1) {
                let pos0 = (pos.x + rn.smallCircleRad * 2).vec(y + rn.smallCircleRad);
                y += rn.smallCircleRad * 3;
-               txt.fillSmallCircle(pos0, i == this.version ? RGB.orangered : RGB.grey, {
+               txt.fillSmallCircle(pos0, i == this.selectedVersion ? RGB.orangered : RGB.grey, {
                   label: "version",
                   addr: new VersionAddr(i),
-                  acts: [["scrub", () => (m : VersionAddr) => {
-                     return () => 
-                        this.updateVersion(m.value, instructions[m.value]);
+                  acts: [["scrub", () => (m: VersionAddr) => {
+                     return () =>
+                        this.updateSelected(m.value, instructions[m.value]);
                   }]]
                });
             }
-         } 
+         }
          let y = pos.y;
          let x = pos.x + rn.smallCircleRad * 4;
          for (let [a, b] of profile.args) {
@@ -526,19 +628,21 @@ namespace rnexe {
             txt.g.fillText(a + " = " + lbl, x.vec(y));
             y += txt.g.fontHeight();
          }
-         this.reverse.clear();
-         etxt.reverse(this.version, this.reverse);
-         let root = etxt.root.get(this.version);
+         this.nodeVarLabels.clear();
+         etxt.computeNodeVarLabels(this.selectedVersion, this.nodeVarLabels);
+         let root = etxt.root.get(this.selectedVersion);
          let [size, anchorX] = root ? root.render(x.vec(y), txt) : [(0).vec(), 0];
          return size;
       }
    }
+   // rendering of a tree node in a concrete execution visualization. 
+   // recursive tree rendering. 
    exe.Node.prototype.render = function (pos, txt: Context) {
       let self = this as exe.Node;
-      let left = self.left.get(txt.host.version);
-      let right = self.right.get(txt.host.version);
-      let color = self.color.get(txt.host.version);
-      let value = self.value.get(txt.host.version);
+      let left = self.left.get(txt.host.selectedVersion);
+      let right = self.right.get(txt.host.selectedVersion);
+      let color = self.color.get(txt.host.selectedVersion);
+      let value = self.value.get(txt.host.selectedVersion);
       let name = value.toString();
       let r = Math.ceil(txt.standardRad(name));
       let h = pos.y + 2 * r + txt.SW * 2;
@@ -561,24 +665,37 @@ namespace rnexe {
       let lax = left0[1];
       let rax = right0[1];
       let ax = lax.lerp(rax, .5);
-      txt.fillSmallCircle(ax.vec(pos.y + r).add((r / 2).vec(-r / 2)),
-         color == "red" ? RGB.red : color == "black" ? RGB.black : RGB.white);
-      let lbld = txt.host.reverse.has(self);
-      txt.strokeCircle(ax.vec(pos.y + r), r, name, null, lbld ? RGB.dodgerblue : null);
+      // color of red-black tree node (red or black)
+      txt.fillSmallCircle(
+         ax.vec(pos.y + r).add((r / 2).vec(-r / 2)),
+         color == "red" ? RGB.red :
+            color == "black" ? RGB.black :
+               RGB.white // shouldn't happen.
+      );
+      let lbld = txt.host.nodeVarLabels.has(self);
+      txt.strokeCircle(
+         ax.vec(pos.y + r),
+         r,
+         name,
+         null,
+         lbld ? RGB.dodgerblue : null
+      );
       if (lbld) {
-         let [name,flipped] = txt.host.reverse.get(self);
-         txt.fillText(ax.vec(pos.y + r * 2), name + (flipped ? "-" : ""), null, "center", RGB.dodgerblue);
-
-
-
+         let [name, flipped] = txt.host.nodeVarLabels.get(self);
+         txt.fillText(
+            ax.vec(pos.y + r * 2), name + (flipped ? "-" : ""),
+            null,
+            "center",
+            RGB.dodgerblue
+         );
       }
-
       // findC will figure out where to anchor tree lines on node.
       function findC(p: Vector2D) {
          // c - lx + lx = c
          let delta = (ax.vec(pos.y + r)).minus(p);
          return delta.normal().mult(delta.length() - r).add(p);
       }
+      // draw lines between nodes using anchors. 
       if (true) {
          let lk = lax.vec(h - txt.SW);
          let lp = findC(lk);
@@ -590,7 +707,7 @@ namespace rnexe {
       return [(left0[0].x + txt.SW / 2 + right0[0].x).vec(h + left0[0].y.max(right0[0].y)), ax];
    }
 }
-
+// final glue.
 namespace rbl {
    class CodeHost extends ebl.Host {
       constructor(readonly parent: Split) {
@@ -610,8 +727,9 @@ namespace rbl {
          super();
       }
       get proc() { return this.parent.proc; }
-      updateVersion(to : exe.Version, ins : ebl.Line) {
-         super.updateVersion(to, ins);
+      updateSelected(to: exe.Version, ins: ebl.Line) {
+         super.updateSelected(to, ins);
+         // synchronize in code host.
          this.parent.left.doSelect(ins);
       }
    }
@@ -632,29 +750,11 @@ namespace rbl {
       }
    }
 
-   function makeTree(k: number, min: number, max: number, isBlack: boolean, r: Random, blackChance = 2): exe.Node {
-      let clr: exe.Color = isBlack || (r.nextN(blackChance) % blackChance == 0) ? "black" : "red";
-      if (clr == "black" && k == 1)
-         return null;
-      let value = Math.round((min + max) / 2);
-      (value > min && value < max).assert();
-
-      let k0 = clr == "black" ? k - 1 : k;
-      (k0 >= 1).assert();
-      let left = makeTree(k0, min, value, clr == "red", r, blackChance);
-      let right = makeTree(k0, value, max, clr == "red", r, blackChance);
-      return exe.Node.make({
-         value: value,
-         color: clr,
-         left: left,
-         right: right,
-      })
-   }
 
 
-
+   // driver for doing insert.
    export function mainInsert() {
-      let empty = new dm.Leaf(dm.BaseHeight.concrete(1), "black", false);
+      let empty = new dm.Leaf(dm.HeightImpl.concrete(1), "black", false);
       let N = new dm.Node("N", "red", dm.Axis.Wild, empty, empty);
       let R = new dm.RootParent(N, empty.height, false);
       let proc = new ebl.RProc("rbInsert", ["V"], dm.JustTree);
@@ -677,10 +777,11 @@ namespace rbl {
       top.child = new Split(top, proc);
       top.renderAll();
    }
+   // driver for doing rebalance. 
    export function mainRebalance() {
-      let k0 = dm.BaseHeight.usingVar("k", 0);
-      let k1 = dm.BaseHeight.usingVar("k", 1);
-      let k2 = dm.BaseHeight.usingVar("k", 2);
+      let k0 = dm.HeightImpl.usingVar("k", 0);
+      let k1 = dm.HeightImpl.usingVar("k", 1);
+      let k2 = dm.HeightImpl.usingVar("k", 2);
       let N = new dm.Node("P", "unknown", dm.Axis.Wild, new dm.Leaf(k0, "black", false), new dm.Leaf(k1, "unknown", true));
       let R = new dm.RootParent(N, k2, true);
 

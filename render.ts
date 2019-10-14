@@ -113,17 +113,13 @@ namespace rn0 {
    function rectg(sz: Vector2D, radius?: number): Geom {
       return {
          has: (pos, at) => pos.vrect(sz).contains(at),
-         highlight: (pos, clr, txt) => {
-            txt.g.strokeRect(pos.vrect(sz), radius, clr);
-         },
-         anchors: (pos) => {
-            return [
-               pos.add((0).vec(sz.y / 2)),
-               pos.add((sz.x / 2).vec(0)),
-               pos.add((sz.x).vec(sz.y / 2)),
-               pos.add((sz.x / 2).vec(sz.y)),
-            ]
-         },
+         highlight: (pos, clr, txt) => txt.g.strokeRect(pos.vrect(sz), radius, clr),
+         anchors: (pos) => [
+            pos.add((0).vec(sz.y / 2)),
+            pos.add((sz.x / 2).vec(0)),
+            pos.add((sz.x).vec(sz.y / 2)),
+            pos.add((sz.x / 2).vec(sz.y)),
+         ],
          center: (pos: Vector2D) => pos.add(sz.div(2)),
       }
    }
@@ -275,14 +271,14 @@ namespace rn0 {
       // entry point for element rendering. 
       renderImage(e: Image, pos: Vector2D, m: Address) {
          if (this.doAt) {
-            if (this.hasFoundPress)
+            // first found policy. 
+            // also, if size is missing, has been invalidated. 
+            if (this.hasFoundPress || !e.size)
                return;
 
             // if we are just doing hit testing, then we can skip
             // this element entirely if the hit is out of bounds. 
             let posG = pos.add(this.translation);
-            if (!e.size)
-               return;
             // use custom hit rectangle if available. 
             let rect = posG.vrect(e.size);
             if (!rect.grow(rn.hitTolerance).contains(this.doAt))
@@ -308,12 +304,13 @@ namespace rn0 {
             return sz;
          });
          // size shouldn't change during rendering. 
-         if (!e.size)
+         if (!e.size) // if size is missing, was invalidated.
             (this.doAt != false).assert();
          else (sz.dist(e.size) < .01).assert();
       }
       // omnibus input handler. 
       private handleInput(posR: Vector2D, geom: Geom, input: Input) {
+         // no need to handle input while computing size or if no input. 
          if (this.doSize || !input)
             return;
          const pos = posR.add(this.translation);
@@ -338,7 +335,13 @@ namespace rn0 {
                   // orangered if we are already being targetted, otherwise forestgreen.
                   // note if target doesn't return false, another call is still needed to make soemthing
                   // happen, so we are safe to call it. 
-                  geom.highlight(posR, canTarget.found && canTarget.found.equals(input.addr) ? RGB.orangered : RGB.forestgreen, this);
+                  geom.highlight(
+                     posR,
+                     canTarget.found &&
+                        canTarget.found.equals(input.addr) ? RGB.orangered :
+                        RGB.forestgreen,
+                     this
+                  );
                }
             }
          }
@@ -522,13 +525,20 @@ namespace rn0 {
                      // use little circles. 
                      if (!input.cardinal[i])
                         continue;
-                     else txt.fillSmallCircle(anchors[i],
-                        !inProgress || input.cardinal[i] == inProgress[0] || inProgress[0] == input.click ?
-                           RGB.dodgerblue : RGB.grey);
+                     else
+                        txt.fillSmallCircle(
+                           anchors[i],
+                           !inProgress ||
+                              input.cardinal[i] == inProgress[0] ||
+                              inProgress[0] == input.click ? RGB.dodgerblue :
+                              RGB.grey);
                }
             }
             return [inputT, overlay, (input.target) ? {
-               target: input.target, label: input.label, addr: input.addr, scrub: input.scrub,
+               target: input.target,
+               label: input.label,
+               addr: input.addr,
+               scrub: input.scrub,
             } : null];
          });
       }
@@ -540,7 +550,13 @@ namespace rn0 {
             this.g.strokeCircle(center, rn.smallCircleRad);
       }
       // stroke a circle of custom radius with optional centered text and input behavior..
-      strokeCircle(center: Vector2D, radius: number, text?: string, input?: Input, stroke? : RGB) {
+      strokeCircle(
+         center: Vector2D,
+         radius: number,
+         text?: string,
+         input?: Input,
+         stroke?: RGB
+      ) {
          this.g.strokeCircle(center, radius, stroke);
          if (text) {
             // center the text 
@@ -552,7 +568,12 @@ namespace rn0 {
          this.handleInput(center, circg(radius), input);
       }
       // stroke a triangle with optional text and possibly a line over that text. 
-      strokeTriangle(position: Vector2D, length: number, text?: [string, boolean], input?: Input): Vector2D {
+      strokeTriangle(
+         position: Vector2D,
+         length: number,
+         text?: [string, boolean],
+         input?: Input
+      ): Vector2D {
          let posA = position.addY(length);
          let posB = posA.addX(length);
          let posC = (position.x + length / 2).vec(position.y);
@@ -587,7 +608,13 @@ namespace rn0 {
       }
       // fill in some text, returns a rectangle so we can put an optional border around it,
       // position is relative to center X if "center" is specified.
-      fillText(pos: Vector2D, text: string, input?: Input, align?: "center", clr?: RGB): Rect2D {
+      fillText(
+         pos: Vector2D,
+         text: string,
+         input?: Input,
+         align?: "center",
+         clr?: RGB
+      ): Rect2D {
          let w = this.g.textWidth(text);
          if (align == "center")
             pos = pos.addX(-w / 2);
@@ -602,7 +629,9 @@ namespace rn0 {
       get SW() { return Math.ceil(this.g.textWidth("X")); }
       get barH() { return this.SW * 3; }
       standardRad(str: string) {
-         return Math.ceil((this.g.textWidth(str) * .7).max(this.SW).max(this.g.fontHeight() * .8));
+         return Math.ceil(
+            (this.g.textWidth(str) * .7).max(this.SW).max(this.g.fontHeight() * .8)
+         );
       }
       // create a bar of undoable buttons
       buttonBar(pos: Vector2D, opts: [string, () => ((() => () => void) | false)][]) {
@@ -662,7 +691,8 @@ namespace rn1 {
    // a more heavyweight host for doing lightweight UI written according to the previous UI framework. 
    export abstract class Host extends ui2.Elem {
       // make a context for omnibus rendering/input/search
-      protected abstract makeContext(g: Render2D, opt?: ["press", Vector2D]): Context;
+      protected abstract makeContext(g: Render2D, opt?: ["press", Vector2D]):
+         Context;
       // render the child element of this host (if any). 
       protected abstract renderChild(pos: Vector2D, txt: Context): Vector2D;
       // store persistant press info, delete when the press is finished. 
@@ -793,7 +823,10 @@ namespace rn {
       protected get hasFoundPress() { return this.foundPressInfo != null; }
       protected handlePress(f: () =>
          false | [ui2.DragT, (txt: Context) => void, TargetInfo]): void {
-         if (!this.doAt0 || this.doAt0[0] != "press" || !this.host.checkEdit() || this.foundPressInfo)
+         if (!this.doAt0 ||
+            this.doAt0[0] != "press" ||
+            !this.host.checkEdit() ||
+            this.foundPressInfo)
             return;
          let result = f();
          if (!result)

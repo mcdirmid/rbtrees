@@ -110,13 +110,13 @@ namespace ui2 {
                isHold = false;
             };
             this.g.canvas.ontouchmove = v => {
-               v.preventDefault();
+               //v.preventDefault();
             };
             this.g.canvas.ontouchstart = v => {
-               v.preventDefault();
+               //v.preventDefault();
             };
             this.g.canvas.ontouchend = v => {
-               v.preventDefault();
+               //v.preventDefault();
             };
 
          }
